@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""pam_exec hook: Discord notice on SSH session open/close.
+
+/etc/pam.d/sshd:  session optional pam_exec.so quiet /opt/labops/bin/labops-session-hook
+Never blocks or fails the login: forks immediately, all errors are swallowed.
+Env from pam_exec: PAM_TYPE (open_session|close_session), PAM_USER, PAM_RHOST, PAM_TTY, PAM_SERVICE.
+"""
+import json
+import os
+import sys
+import time
+
+for _p in ("/opt/labops/lib", os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib")):
+    if os.path.isdir(_p):
+        sys.path.insert(0, _p)
+
+
+def fmt_dur(sec):
+    sec = int(sec)
+    h, r = divmod(sec, 3600)
+    m, s = divmod(r, 60)
+    return f"{h}h {m}m" if h else (f"{m}m {s}s" if m else f"{s}s")
+
+
+def main():
+    import labops_common as C
+    conf = C.load_conf()
+    if conf.get("SESSION_NOTIFY", "1") != "1":
+        return
+    typ = os.environ.get("PAM_TYPE", "")
+    user = C.sanitize_text(os.environ.get("PAM_USER", "?"), 32)
+    rhost = C.sanitize_text(os.environ.get("PAM_RHOST", "") or "local", 64)
+    if typ not in ("open_session", "close_session"):
+        return
+    sdir = conf["SESSION_STATE_DIR"]
+    os.makedirs(sdir, mode=0o700, exist_ok=True)
+    key = os.path.join(sdir, f"{os.getppid()}.json")  # the per-connection sshd process
+    now = time.time()
+    role = "admin" if user == conf.get("ADMIN_USER") else (
+        "student" if C.user_in_group(user, conf.get("STUDENTS_GROUP", "students")) else "user")
+    if role == "admin" and conf.get("SESSION_NOTIFY_ADMIN", "0") != "1":
+        return
+    if typ == "open_session":
+        # de-duplicate bursts (e.g. VS Code reconnects) per user+host
+        dkey = os.path.join(sdir, f"last-{user}-{rhost}".replace("/", "_"))
+        try:
+            if now - os.path.getmtime(dkey) < float(conf.get("SESSION_DEDUP_S", "30")):
+                json.dump({"ts": now, "user": user, "rhost": rhost, "quiet": True}, open(key, "w"))
+                return
+        except OSError:
+            pass
+        open(dkey, "w").close()
+        json.dump({"ts": now, "user": user, "rhost": rhost}, open(key, "w"))
+        C.discord_post(f"🟢 **SSH login** `{user}` ({role}) from `{rhost}` · {time.strftime('%m-%d %H:%M:%S')}")
+    else:
+        info = {}
+        try:
+            info = json.load(open(key))
+            os.unlink(key)
+        except (OSError, ValueError):
+            pass
+        if info.get("quiet"):
+            return
+        dur = f" · session {fmt_dur(now - info['ts'])}" if "ts" in info else ""
+        C.discord_post(f"⚪ **SSH logout** `{user}` ({role}) from `{rhost}`{dur} · {time.strftime('%m-%d %H:%M:%S')}")
+
+
+if __name__ == "__main__":
+    try:
+        if os.fork() > 0:      # parent returns to PAM at once
+            os._exit(0)
+        os.setsid()
+        if os.fork() > 0:
+            os._exit(0)
+        devnull = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(devnull, fd)
+        main()
+    except Exception:
+        pass
+    os._exit(0)

@@ -1,0 +1,9 @@
+[Unit]
+Description=labops: daily summary at 08:00 KST
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target

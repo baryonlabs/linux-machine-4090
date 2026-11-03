@@ -1,0 +1,70 @@
+# labops user registry — source of truth for `labctl sync`.
+# Installed copy: /etc/labops/users.yaml (root:root 644; edit with `sudoedit`, then `sudo labctl sync`).
+# This repo copy is only the seed (install.sh never overwrites an existing /etc copy).
+#
+# Format: restricted YAML (scalars only; one `- name:` item per user).
+#   role:      student | admin        (admin accounts are never locked/removed by labctl)
+#   state:     active | locked | removed
+#   expires:   YYYY-MM-DD | null      (account expiry, `chage -E`)
+#   headscale: true | false           (create Headscale user + add to ACL group:students)
+#   ssh_pubkey: "ssh-ed25519 ..." | null   (null = leave authorized_keys untouched)
+users:
+  - name: martin
+    full_name: "Martin (admin)"
+    role: admin
+    state: active
+    expires: null
+    headscale: false          # already a Headscale user in group:admin (managed by hand)
+    gpu: true
+    ssh_pubkey: null
+    notes: "server admin; sudo + docker"
+
+  - name: student1
+    full_name: "Student One"
+    role: student
+    state: active
+    expires: 2027-01-04
+    headscale: true
+    gpu: true
+    ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFvPqZ6z5VpwDrj62nipTVf9bi4eGn495pOtMSAUa6k student1@macbook-ppid"
+    notes: "video multi-target captioning, LoRA on 8B models"
+
+  - name: student3
+    full_name: "student3@example.com"
+    role: student
+    state: active
+    expires: null             # TODO: set an end date
+    headscale: false          # was on the old tailscale.com tailnet; set true + `labctl add` to onboard to Headscale
+    gpu: true
+    ssh_pubkey: null          # existing authorized_keys kept as-is
+    notes: "last login 2026-10-22; shell zsh; member of sglang group"
+
+  - name: student5
+    full_name: "student5"
+    role: student
+    state: locked
+    expires: null
+    headscale: false
+    gpu: true
+    ssh_pubkey: null
+    notes: "locked 2026-11-04 (idle since 2026-05-22)"
+
+  - name: student6
+    full_name: "student6"
+    role: student
+    state: locked
+    expires: null
+    headscale: false
+    gpu: true
+    ssh_pubkey: null
+    notes: "locked 2026-11-04 (idle since 2026-05-15; sudo removed)"
+
+  - name: student4
+    full_name: "student4@example.com"
+    role: student
+    state: locked
+    expires: null
+    headscale: false
+    gpu: true
+    ssh_pubkey: null
+    notes: "locked 2026-11-04 (never logged in)"

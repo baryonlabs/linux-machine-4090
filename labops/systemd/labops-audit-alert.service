@@ -1,0 +1,9 @@
+[Unit]
+Description=labops: high-signal auditd keys to Discord
+After=auditd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/labops/bin/labops-audit-alert
+Nice=10
+TimeoutStartSec=240
