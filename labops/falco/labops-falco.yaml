@@ -1,0 +1,22 @@
+# labops Falco config drop-in → /etc/falco/config.d/labops.yaml (merged over /etc/falco/falco.yaml)
+engine:
+  kind: modern_ebpf
+# drop INFO/DEBUG rules entirely; NOTICE stays in the journal, WARNING+ goes to Discord (falcosidekick filter)
+priority: notice
+json_output: true
+json_include_output_property: true
+json_include_tags_property: true
+stdout_output:
+  enabled: true
+syslog_output:
+  enabled: false
+http_output:
+  enabled: true
+  url: http://127.0.0.1:2801/
+  user_agent: falcosecurity/falco
+
+# health endpoint: localhost only (default 0.0.0.0:8765 exposes it to LAN)
+webserver:
+  enabled: true
+  listen_address: 127.0.0.1
+  listen_port: 8765

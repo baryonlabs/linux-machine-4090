@@ -1,0 +1,26 @@
+[Unit]
+Description=Falcosidekick (Falco alerts -> Discord, WARNING+)
+After=network-online.target
+Wants=network-online.target
+Before=falco-modern-bpf.service
+
+[Service]
+DynamicUser=yes
+EnvironmentFile=/etc/labops/falcosidekick.env
+ExecStart=/usr/local/bin/falcosidekick
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=192M
+
+[Install]
+WantedBy=multi-user.target

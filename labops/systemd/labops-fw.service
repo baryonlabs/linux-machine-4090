@@ -1,0 +1,13 @@
+[Unit]
+Description=labops: only root may talk to falcosidekick (127.0.0.1:2801) — stops fake alerts from local users
+After=network-pre.target ufw.service docker.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'iptables -C OUTPUT -o lo -p tcp --dport 2801 -m owner ! --uid-owner 0 -j REJECT 2>/dev/null || iptables -I OUTPUT 1 -o lo -p tcp --dport 2801 -m owner ! --uid-owner 0 -j REJECT'
+ExecStop=/bin/sh -c 'while iptables -D OUTPUT -o lo -p tcp --dport 2801 -m owner ! --uid-owner 0 -j REJECT 2>/dev/null; do :; done'
+
+[Install]
+WantedBy=multi-user.target

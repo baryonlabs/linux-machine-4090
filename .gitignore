@@ -1,0 +1,7 @@
+*.pyc
+*.url
+.DS_Store
+__pycache__/
+email-reply-student1.txt
+fix-control-plane.sh
+secrets/

@@ -1,0 +1,9 @@
+[Unit]
+Description=labops privileged-request executor (fixed action catalog: apt-install of Ubuntu-archive packages)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/labops/bin/labops-executor
+TimeoutStartSec=3700
+Nice=5

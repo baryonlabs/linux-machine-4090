@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""Daily security/usage summary → Discord (systemd timer, 08:00 KST). Run as root.
+   --print   print instead of posting      --hours N   window (default 24)"""
+import argparse
+import collections
+import json
+import os
+import re
+import socket
+import sqlite3
+import sys
+import time
+
+for _p in ("/opt/labops/lib", os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib")):
+    if os.path.isdir(_p):
+        sys.path.insert(0, _p)
+import labops_audit as AU  # noqa: E402
+import labops_common as C  # noqa: E402
+
+
+def journal(args, hours):
+    r = C.run(["journalctl", "--no-pager", "-o", "cat", "--since", f"-{hours}h"] + args, timeout=180)
+    return r.stdout.splitlines()
+
+
+def sec_logins(hours):
+    ok, fail = collections.Counter(), collections.Counter()
+    ips = collections.defaultdict(set)
+    for ln in journal(["-u", "ssh", "-u", "sshd"], hours):
+        m = re.search(r"Accepted (?:publickey|password|keyboard-interactive\S*) for (\S+) from (\S+)", ln)
+        if m:
+            ok[m.group(1)] += 1
+            ips[m.group(1)].add(m.group(2))
+            continue
+        m = re.search(r"(?:Invalid user (\S+) from|Connection closed by (?:authenticating|invalid) user (\S+)|"
+                      r"Failed \S+ for (?:invalid user )?(\S+) from|User (\S+) from \S+ not allowed)", ln)
+        if m:
+            fail[next(g for g in m.groups() if g)] += 1
+    out = ["**SSH logins**"]
+    out += [f"  {u}: {n} (from {', '.join(sorted(ips[u])[:3])})" for u, n in ok.most_common()] or ["  none"]
+    if fail:
+        out.append("**Failed SSH** " + ", ".join(f"{u}:{n}" for u, n in fail.most_common(8)) +
+                   f" (total {sum(fail.values())})")
+    return out
+
+
+def sec_sudo(hours):
+    bad = collections.Counter()
+    for ln in journal(["_COMM=sudo"], hours) + journal(["_COMM=su"], hours):
+        m = re.search(r"^\s*(\S+) : .*(incorrect password|NOT in sudoers|command not allowed|a password is required)", ln)
+        if m:
+            bad[m.group(1)] += 1
+            continue
+        m = re.search(r"pam_unix\((?:sudo|su|su-l):auth\): authentication failure;.*ruser=(\S*)", ln)
+        if m:
+            bad[m.group(1) or "?"] += 1
+            continue
+        m = re.search(r"FAILED SU \(to \S+\) (\S+)", ln)
+        if m:
+            bad[m.group(1)] += 1
+    return ["**Failed sudo/su** " + (", ".join(f"{u}:{n}" for u, n in bad.most_common(8)) if bad else "none")]
+
+
+def sec_commands(hours):
+    if not C.run(["which", "ausearch"]).stdout:
+        return ["**Student commands** auditd not installed"]
+    evs, _ = AU.search("student_exec", start=AU.ausearch_start(hours * 3600))
+    per = collections.defaultdict(collections.Counter)
+    for e in evs:
+        s = e["syscall"]
+        if s.get("success") == "no":
+            continue
+        per[C.uid_name(s.get("auid", "?"))][s.get("comm", "?")] += 1
+    out = ["**Student commands (auditd execve)**"]
+    for u, cnt in sorted(per.items(), key=lambda kv: -sum(kv[1].values())):
+        top = ", ".join(f"{c}×{n}" for c, n in cnt.most_common(8))
+        out.append(f"  {u}: {sum(cnt.values())} execs — {top}")
+    if len(out) == 1:
+        out.append("  none")
+    return out
+
+
+def sec_gpu(conf, hours):
+    db = conf["GPU_DB"]
+    if not os.path.exists(db):
+        return ["**GPU** no data"]
+    iv = int(conf["GPU_INTERVAL_S"])
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    since = int(time.time() - hours * 3600)
+    rows = con.execute("""WITH t AS (SELECT user, ts, SUM(vram_mib) v FROM samples WHERE ts>=? GROUP BY user, ts)
+                          SELECT user, COUNT(*)*?/3600.0, MAX(v) FROM t GROUP BY user ORDER BY 2 DESC""", (since, iv)).fetchall()
+    util = con.execute("SELECT AVG(util), MAX(mem_used) FROM gpu WHERE ts>=?", (since,)).fetchone()
+    out = [f"**GPU** avg util {util[0] or 0:.0f}%, peak mem {(util[1] or 0)/1024:.1f} GiB"]
+    out += [f"  {u}: {h:.1f} GPU-h, peak {(v or 0)/1024:.1f} GiB" for u, h, v in rows] or ["  idle"]
+    long_ = con.execute("""SELECT user, COUNT(*) FROM (SELECT user, pid, start_ts FROM samples WHERE ts>=?
+                           GROUP BY user, pid, start_ts HAVING MAX(ts)-start_ts>86400) GROUP BY user""", (since,)).fetchall()
+    if long_:
+        out.append("  jobs >24h: " + ", ".join(f"{u}:{n}" for u, n in long_))
+    return out
+
+
+def sec_falco(hours):
+    units = ["-u", "falco-modern-bpf", "-u", "falco"]
+    pr, rules = collections.Counter(), collections.Counter()
+    for ln in journal(units, hours):
+        if not ln.startswith("{"):
+            continue
+        try:
+            j = json.loads(ln)
+        except ValueError:
+            continue
+        pr[j.get("priority", "?")] += 1
+        rules[j.get("rule", "?")] += 1
+    if not pr:
+        state = C.run(["systemctl", "is-active", "falco-modern-bpf"]).stdout.strip()
+        return [f"**Falco alerts** none (service: {state or '?'})"]
+    out = ["**Falco alerts** " + ", ".join(f"{p}:{n}" for p, n in pr.most_common())]
+    out += [f"  {r}: {n}" for r, n in rules.most_common(6)]
+    return out
+
+
+def sec_audit_keys(hours):
+    if not C.run(["which", "ausearch"]).stdout:
+        return []
+    out = []
+    for key in ("cve_2026_98432", "shadow_read", "priv_esc", "modules", "identity", "sudoers", "sshd_config", "ptrace"):
+        evs, _ = AU.search(key, start=AU.ausearch_start(hours * 3600))
+        if evs:
+            who = collections.Counter(C.uid_name(e["syscall"].get("auid", "?")) for e in evs)
+            out.append(f"  {key}: {len(evs)} ({', '.join(f'{u}:{n}' for u, n in who.most_common(4))})")
+    st = C.run(["auditctl", "-s"]).stdout
+    lost = re.search(r"lost (\d+)", st)
+    head = "**auditd keys**" + (f" (lost events since boot: {lost.group(1)})" if lost else "")
+    return [head] + (out or ["  nothing notable"])
+
+
+def sec_disk(conf):
+    root = conf["DATA_ROOT"]
+    out = []
+    for p in ("/", "/mnt/data"):
+        try:
+            s = os.statvfs(p)
+            used = 100 - s.f_bavail * 100 / max(s.f_blocks, 1)
+            out.append(f"{p} {used:.0f}% used ({s.f_bavail * s.f_frsize / 2**40:.1f} TiB free)")
+        except OSError:
+            pass
+    sizes = []
+    try:
+        for d in sorted(os.listdir(root)):
+            p = os.path.join(root, d)
+            if os.path.isdir(p) and not os.path.islink(p):
+                r = C.run(["nice", "-n19", "ionice", "-c3", "du", "-sx", "--block-size=1G", p], timeout=1500)
+                if r.returncode == 124:
+                    sizes.append(f"{d}:(du timeout)")
+                elif r.stdout:
+                    sizes.append(f"{d}:{r.stdout.split()[0]}G")
+    except OSError:
+        pass
+    return ["**Disk** " + "; ".join(out), "  " + (", ".join(sizes) if sizes else "(no user dirs)")]
+
+
+def sec_updates():
+    r = C.run(["apt-get", "-s", "-o", "Debug::NoLocking=1", "upgrade"], timeout=300)
+    inst = [ln for ln in r.stdout.splitlines() if ln.startswith("Inst ")]
+    sec = [ln for ln in inst if "-security" in ln]
+    nv = [ln for ln in inst if "nvidia" in ln]
+    out = [f"**Updates** {len(inst)} pending ({len(sec)} security, {len(nv)} nvidia)"]
+    if os.path.exists("/var/run/reboot-required"):
+        try:
+            pk = open("/var/run/reboot-required.pkgs").read().split()
+        except OSError:
+            pk = []
+        out.append(f"  REBOOT REQUIRED ({', '.join(sorted(set(pk))[:6])})")
+    out.append(f"  kernel running: {os.uname().release}")
+    return out
+
+
+def sec_cve():
+    r = C.run(["pro", "fix", "CVE-2026-98432", "--dry-run"], timeout=120)
+    txt = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", r.stdout + r.stderr)
+    lines = [ln.strip(" ✘✔✓") for ln in txt.splitlines() if ln.strip()]
+    status = next((ln for ln in reversed(lines) if re.search(r"(resolved|not resolved|not affected|fix is coming|vulnerab)", ln, re.I)),
+                  lines[-1] if lines else "pro fix: no output")
+    nft = C.run(["nft", "list", "table", "ip", "cve_2026_98432"])
+    m = re.search(r"counter packets (\d+)", nft.stdout)
+    mit = f"nft mitigation active, dropped {m.group(1)} pkts" if nft.returncode == 0 else "nft mitigation NOT loaded"
+    return [f"**CVE-2026-98432** {C.sanitize_text(status, 160)}", f"  {mit}"]
+
+
+def sec_requests(conf):
+    try:
+        import labops_requests as R
+        reqs = R.list_requests(conf)
+    except Exception:  # noqa: BLE001
+        return []
+    pend = [r for r in reqs if r.get("status") == "pending"]
+    day = [r for r in reqs if r.get("ts", 0) >= time.time() - 86400]
+    return [f"**Privileged requests** {len(pend)} pending" + (f" (#{', #'.join(str(r['id']) for r in pend[:10])})" if pend else "")
+            + f", {len(day)} new in 24h — review: `labctl requests`"]
+
+
+def safe(fn, *a):
+    try:
+        return fn(*a)
+    except Exception as e:  # noqa: BLE001
+        return [f"**{fn.__name__}** error: {type(e).__name__}: {str(e)[:120]}"]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--print", action="store_true")
+    ap.add_argument("--hours", type=int, default=24)
+    ap.add_argument("--skip-disk", action="store_true", help="skip the (slow) du of user data dirs")
+    a = ap.parse_args()
+    conf = C.load_conf()
+    h = a.hours
+    lines = [f"__**labops daily — {socket.gethostname()} — {time.strftime('%Y-%m-%d %H:%M %Z')}**__ (last {h}h)"]
+    for sec in (safe(sec_logins, h), safe(sec_sudo, h), safe(sec_commands, h), safe(sec_gpu, conf, h),
+                safe(sec_falco, h), safe(sec_audit_keys, h), safe(sec_requests, conf), ([] if a.skip_disk else safe(sec_disk, conf)),
+                safe(sec_updates), safe(sec_cve)):
+        lines += sec
+    text = "\n".join(lines)
+    if a.print:
+        print(text)
+    else:
+        sys.exit(0 if C.discord_post(text, conf) else 1)
+
+
+if __name__ == "__main__":
+    main()

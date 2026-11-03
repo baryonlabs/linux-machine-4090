@@ -1,0 +1,7 @@
+cowsay:
+  Installed: (none)
+  Candidate: 3.03+dfsg2-8
+  Version table:
+     3.03+dfsg2-8 500
+        500 http://mirror.kakao.com/ubuntu noble/universe amd64 Packages
+        500 http://mirror.kakao.com/ubuntu noble/universe i386 Packages

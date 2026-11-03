@@ -1,0 +1,15 @@
+// Headscale ACL policy — mounted at /etc/headscale/acl.hujson
+// martin: full access. Students: only SSH (2322) on the 4090 box.
+{
+  "groups": {
+    "group:admin":    ["martin@"],
+    "group:students": ["student1@"]
+  },
+  "hosts": {
+    "gpu4090": "100.64.0.2/32"
+  },
+  "acls": [
+    { "action": "accept", "src": ["group:admin"],    "dst": ["*:*"] },
+    { "action": "accept", "src": ["group:students"], "dst": ["gpu4090:2322"] }
+  ]
+}
