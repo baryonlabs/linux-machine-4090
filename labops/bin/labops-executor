@@ -1,0 +1,177 @@
+#!/usr/bin/python3 -I
+"""labops-executor — root, oneshot. Triggered by labops-executor.path (new decision / new request) and a timer.
+
+ 1. notify:   new requests (notified=false) → Discord "new request #id from <user>"
+ 2. decide:   decisions/<id>.json (must be a regular file owned by ADMIN_USER, sha256 must match the request core)
+              reject → rejected | approve+other → acknowledged (never executed) |
+              approve+apt-install → re-validate (fixed catalog) → apt-get install -y --no-install-recommends
+ 3. expire:   pending > REQ_EXPIRY_DAYS → expired
+Every decision file is moved to decisions-processed/ (also invalid ones) so the path unit cannot loop.
+"""
+import json
+import os
+import pwd
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, "/opt/labops/lib")
+import labops_apt as A  # noqa: E402
+import labops_common as C  # noqa: E402
+import labops_requests as R  # noqa: E402
+
+HOST = socket.gethostname()
+
+
+def log(conf, msg):
+    print(f"labops-executor: {msg}", flush=True)  # → journald
+    R.append_log(conf, msg)
+    if os.path.exists("/usr/sbin/auditctl"):
+        subprocess.run(["/usr/sbin/auditctl", "-m", f"labops-executor {msg[:900]}"], capture_output=True)
+
+
+def save(conf, r):
+    r["updated"] = int(time.time())
+    try:
+        lab = pwd.getpwnam("labops").pw_uid
+        gid = os.stat(conf["REQ_DIR"]).st_gid
+    except (KeyError, OSError):
+        lab, gid = -1, -1
+    R.write_request(conf, r, uid=lab, gid=gid)
+
+
+def notify_new(conf):
+    todo = [r for r in R.list_requests(conf) if not r.get("notified") and r.get("status") == "pending"]
+    for r in todo:
+        what = ("`apt-install " + " ".join(r.get("args") or []) + "`") if r["action"] == "apt-install" else "**other** (manual)"
+        ok = C.discord_post(f"labops request **#{r['id']}** from **{r['user']}** on {HOST}: {what}\n"
+                            f"> {C.sanitize_text(r.get('reason', ''), 600)}\n"
+                            f"review as {conf['ADMIN_USER']}: `labctl requests` → `labctl approve {r['id']}` / "
+                            f"`labctl reject {r['id']} --reason ...`", conf, username="labops-requests")
+        if ok:
+            with R.Lock(conf):
+                cur = R.load_request(conf, r["id"])
+                cur["notified"] = True
+                save(conf, cur)
+
+
+def read_decision(conf, path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd) as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("not a regular file")
+        admin_uid = pwd.getpwnam(conf["ADMIN_USER"]).pw_uid
+        if st.st_uid != admin_uid:
+            raise ValueError(f"owned by uid {st.st_uid}, not {conf['ADMIN_USER']}")
+        if st.st_size > 4096:
+            raise ValueError("too large")
+        d = json.load(f)
+    if not isinstance(d, dict) or d.get("decision") not in ("approve", "reject"):
+        raise ValueError("bad decision")
+    return d
+
+
+def apt_install(conf, r):
+    hosts = set(conf["APT_ALLOWED_HOSTS"].split(","))
+    good, errs, sim = A.validate(r["args"], hosts, int(conf["REQ_MAX_PACKAGES"]), int(conf["REQ_MAX_NEW_PACKAGES"]))
+    if not good:
+        return "failed", "validation failed at execution time: " + "; ".join(errs)[:600], ""
+    env = {"LC_ALL": "C", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "DEBIAN_FRONTEND": "noninteractive"}
+    cmd = ["apt-get", "install", "-y", "--no-install-recommends", "--no-upgrade",
+           "-o", "DPkg::Lock::Timeout=600", "-o", "Dpkg::Options::=--force-confold"] + list(r["args"])
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=3600)
+    out = (p.stdout + p.stderr)[-16000:]
+    new = [i[0] for i in sim["inst"]]
+    if p.returncode == 0:
+        return "done", f"installed {len(new)} package(s): {', '.join(new[:20])}", out
+    return "failed", f"apt-get exit {p.returncode}", out
+
+
+def process_decisions(conf):
+    ddir, pdir = conf["REQ_DECISIONS"], conf["REQ_PROCESSED"]
+    try:
+        names = sorted(os.listdir(ddir))
+    except OSError:
+        return
+    for n in names:
+        path = os.path.join(ddir, n)
+        dest = os.path.join(pdir, f"{time.strftime('%Y%m%d%H%M%S')}-{n}")
+        try:
+            m = R.ID_FILE_RE.match(n)
+            if not m:
+                raise ValueError("bad file name")
+            d = read_decision(conf, path)
+            rid = int(m.group(1))
+            if int(d.get("id", -1)) != rid:
+                raise ValueError("id mismatch")
+            with R.Lock(conf):
+                r = R.load_request(conf, rid)
+                if r.get("status") != "pending":
+                    raise ValueError(f"request #{rid} is {r.get('status')}")
+                if d.get("sha256") != R.core_hash(r) or r.get("sha256") != R.core_hash(r):
+                    raise ValueError(f"request #{rid} hash mismatch (modified request?)")
+                if not (C.user_in_group(r["user"], conf["STUDENTS_GROUP"]) or str(r["uid"]) in conf["REQ_EXTRA_UIDS"].split(",")):
+                    raise ValueError(f"requester {r['user']} is not a student")
+                if pwd.getpwuid(r["uid"]).pw_name != r["user"]:
+                    raise ValueError("uid/user mismatch")
+                reason = C.sanitize_text(d.get("reason", ""), 300)
+                if d["decision"] == "reject":
+                    r.update(status="rejected", result=f"rejected: {reason or 'no reason given'}")
+                elif r["action"] == "other":
+                    r.update(status="acknowledged", result=f"acknowledged by admin (handled manually){': ' + reason if reason else ''}")
+                else:
+                    r.update(status="running", result="installing")
+                save(conf, r)
+            if r["status"] == "running":
+                log(conf, f"execute id={rid} user={r['user']} apt-install {' '.join(r['args'])}")
+                try:
+                    status, result, out = apt_install(conf, r)
+                except subprocess.TimeoutExpired:
+                    status, result, out = "failed", "apt-get timed out", ""
+                with R.Lock(conf):
+                    r = R.load_request(conf, rid)
+                    r.update(status=status, result=result, output=out)
+                    save(conf, r)
+            log(conf, f"decision id={rid} user={r['user']} -> {r['status']}: {r.get('result')}")
+            icon = {"done": "✅", "failed": "❌", "rejected": "🚫", "acknowledged": "📝"}.get(r["status"], "")
+            C.discord_post(f"{icon} labops request **#{rid}** ({r['user']}): **{r['status']}** — "
+                           f"{C.sanitize_text(r.get('result', ''), 700)}", conf, username="labops-requests")
+        except Exception as e:  # noqa: BLE001 — never leave a decision file behind
+            log(conf, f"invalid decision {n}: {type(e).__name__}: {e}")
+            dest += ".invalid"
+        finally:
+            try:
+                os.makedirs(pdir, mode=0o700, exist_ok=True)
+                shutil.move(path, dest)
+            except OSError:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+
+def expire(conf):
+    cut = time.time() - int(conf["REQ_EXPIRY_DAYS"]) * 86400
+    with R.Lock(conf):
+        for r in R.list_requests(conf):
+            if r.get("status") == "pending" and r.get("ts", 0) < cut:
+                r.update(status="expired", result=f"no decision within {conf['REQ_EXPIRY_DAYS']} days")
+                save(conf, r)
+                log(conf, f"expired id={r['id']} user={r.get('user')}")
+
+
+def main():
+    if os.geteuid() != 0:
+        sys.exit("labops-executor must run as root (systemd unit)")
+    conf = C.load_conf()
+    notify_new(conf)
+    process_decisions(conf)
+    expire(conf)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,892 @@
+#!/usr/bin/env python3
+"""labctl — lab user lifecycle, GPU report and privileged-request review for the shared GPU server.
+
+  sudo labctl sync                 apply /etc/labops/users.yaml (accounts, AllowUsers, data dirs, Headscale, audit/falco lists)
+  sudo labctl add <user>           sync one user + Headscale pre-auth key + onboarding info
+  sudo labctl remove <user>        offboard (lock, AllowUsers, Headscale, kill sessions, archive data — no deletion)
+  sudo labctl extend <user> <date>
+       labctl list                 state / expiry / last login / Headscale nodes        (works as martin)
+       labctl report [--days N]    GPU usage per user                                    (works as martin)
+       labctl requests [--history] privileged-request queue                              (works as martin)
+       labctl approve <id> | reject <id> --reason "..."                                  (works as martin, no sudo)
+  Global: --dry-run (print the plan, change nothing), --registry PATH
+
+Without root, OS-level steps are skipped (reported as "needs sudo"); Headscale steps run if
+docker is reachable (martin is in the docker group). Everything is idempotent.
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import pwd
+import re
+import shutil
+import sqlite3
+import sys
+import time
+
+_here = os.path.dirname(os.path.realpath(__file__))
+for _p in ("/opt/labops/lib", os.path.join(_here, "lib")):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import labops_common as C  # noqa: E402
+
+TS = time.strftime("%Y%m%d%H%M%S")
+TODAY = dt.date.today()
+
+
+# ============================================================================ helpers
+class Ctx:
+    def __init__(self, args):
+        self.dry = args.dry_run
+        self.root = os.geteuid() == 0
+        self.conf = C.load_conf()
+        reg = args.registry or self.conf["REGISTRY"]
+        if not os.path.exists(reg):
+            alt = os.path.join(_here, "users.yaml")
+            if os.path.exists(alt):
+                reg = alt
+        self.registry_path = reg
+        self.skipped = []
+        self.changed = 0
+        self.errors = 0
+        self._docker = None
+
+    @property
+    def docker(self):
+        if self._docker is None:
+            r = C.run(["docker", "exec", self.conf["HS_CONTAINER"], "headscale", "version"], timeout=20)
+            self._docker = r.returncode == 0
+        return self._docker
+
+
+def say(msg):
+    print(msg, flush=True)
+
+
+def act(ctx, desc, cmd=None, fn=None, needs_root=True, check=True):
+    """Perform one change (cmd list or python fn). Honors --dry-run and privilege."""
+    if ctx.dry:
+        say(f"  [plan] {desc}")
+        return True
+    if needs_root and not ctx.root:
+        say(f"  [needs sudo] {desc}")
+        ctx.skipped.append(desc)
+        return False
+    say(f"  [do] {desc}")
+    ctx.changed += 1
+    try:
+        if cmd:
+            r = C.run(cmd, timeout=300)
+            if r.returncode != 0:
+                say(f"    !! rc={r.returncode}: {(r.stderr or r.stdout).strip()[:500]}")
+                ctx.errors += 1
+                if check:
+                    return False
+        if fn:
+            fn()
+    except Exception as e:  # noqa: BLE001
+        say(f"    !! {type(e).__name__}: {e}")
+        ctx.errors += 1
+        return False
+    return True
+
+
+def ok(msg):
+    say(f"  [ok] {msg}")
+
+
+def shadow_expire(name):
+    """Return account expiry as date / None (never) / '?' (not readable)."""
+    r = C.run(["getent", "shadow", name])
+    if r.returncode != 0 or not r.stdout:
+        return "?"
+    f = r.stdout.strip().split(":")
+    if len(f) < 8 or f[7] == "":
+        return None
+    return dt.date(1970, 1, 1) + dt.timedelta(days=int(f[7]))
+
+
+def is_expired(exp):
+    return isinstance(exp, dt.date) and exp <= TODAY
+
+
+def lastlog(name):
+    r = C.run(["lastlog", "-u", name])
+    lines = r.stdout.strip().splitlines()
+    if len(lines) < 2:
+        return "?"
+    if "Never logged in" in lines[1]:
+        return "never"
+    m = re.search(r"(\w{3}) (\w{3}) +(\d+) (\d\d:\d\d):\d\d [+-]\d{4} (\d{4})", lines[1])
+    if not m:
+        return "?"
+    try:
+        d = dt.datetime.strptime(f"{m.group(2)} {m.group(3)} {m.group(5)} {m.group(4)}", "%b %d %Y %H:%M")
+        return d.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return "?"
+
+
+def registry(ctx):
+    try:
+        return C.load_registry(ctx.registry_path)
+    except (OSError, ValueError) as e:
+        sys.exit(f"registry {ctx.registry_path}: {e}")
+
+
+def reg_user(ctx, name):
+    for u in registry(ctx):
+        if u["name"] == name:
+            return u
+    sys.exit(f"{name}: not in registry {ctx.registry_path} — add an entry first (sudoedit {ctx.registry_path})")
+
+
+def protected(ctx, name):
+    return name in (ctx.conf["ADMIN_USER"], "root", os.environ.get("SUDO_USER", ""))
+
+
+def registry_update(ctx, name, field, value):
+    with open(ctx.registry_path) as f:
+        text = f.read()
+    new = C.registry_set_field(text, name, field, value)
+    C.parse_registry(new)  # must still parse
+    if new == text:
+        return
+    def w():
+        os.makedirs(ctx.conf["BACKUP_DIR"], exist_ok=True)
+        shutil.copy2(ctx.registry_path, os.path.join(ctx.conf["BACKUP_DIR"], f"users.yaml.{TS}"))
+        st = os.stat(ctx.registry_path)
+        C.atomic_write(ctx.registry_path, new, mode=st.st_mode & 0o777, uid=st.st_uid, gid=st.st_gid)
+    act(ctx, f"registry: {name}.{field} = {value}", fn=w,
+        needs_root=not os.access(ctx.registry_path, os.W_OK))
+
+
+# ============================================================================ sshd AllowUsers
+ALLOW_RE = re.compile(r"^(\s*AllowUsers\s+)(.*?)\s*$", re.M)
+
+
+def allowusers_apply(ctx, add=(), remove=()):
+    path = ctx.conf["SSHD_ALLOWUSERS_FILE"]
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError as e:
+        say(f"  !! cannot read {path}: {e}")
+        ctx.errors += 1
+        return
+    m = ALLOW_RE.search(text)
+    if not m:
+        say(f"  !! no AllowUsers line in {path} — not touching sshd")
+        ctx.errors += 1
+        return
+    cur = m.group(2).split()
+    remove = [r for r in remove if not protected(ctx, r)]
+    new = [u for u in cur if u not in remove] + [a for a in add if a not in cur and a not in remove]
+    if new == cur:
+        ok(f"AllowUsers: {' '.join(cur)}")
+        return
+    newtext = text[: m.start()] + m.group(1) + " ".join(new) + text[m.end():]
+
+    def w():
+        os.makedirs(ctx.conf["BACKUP_DIR"], mode=0o700, exist_ok=True)
+        bak = os.path.join(ctx.conf["BACKUP_DIR"], f"{os.path.basename(path)}.{TS}")
+        shutil.copy2(path, bak)
+        st = os.stat(path)
+        C.atomic_write(path, newtext, mode=st.st_mode & 0o777, uid=st.st_uid, gid=st.st_gid)
+        t = C.run(["sshd", "-t"])
+        if t.returncode != 0:
+            shutil.copy2(bak, path)
+            raise RuntimeError(f"sshd -t failed, restored backup: {t.stderr.strip()}")
+        r = C.run(["systemctl", "reload", "ssh"])
+        if r.returncode != 0:
+            C.run(["systemctl", "reload", "sshd"])
+    act(ctx, f"AllowUsers: {' '.join(cur)}  ->  {' '.join(new)}  (backup, sshd -t, reload)", fn=w)
+
+
+# ============================================================================ headscale
+def hs(ctx, *args, as_json=True):
+    cmd = ["docker", "exec", ctx.conf["HS_CONTAINER"], "headscale", *args]
+    if as_json:
+        cmd += ["-o", "json"]
+    r = C.run(cmd, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError(f"headscale {' '.join(args)}: {(r.stderr or r.stdout).strip()[:300]}")
+    if not as_json:
+        return r.stdout
+    out = r.stdout.strip()
+    return json.loads(out) if out and out != "null" else []
+
+
+def hs_users(ctx):
+    return {u["name"]: u for u in hs(ctx, "users", "list")}
+
+
+def hs_nodes(ctx):
+    return hs(ctx, "nodes", "list")
+
+
+def hs_keys(ctx):
+    return hs(ctx, "preauthkeys", "list")
+
+
+def _pb_time(v):
+    if isinstance(v, dict):
+        return int(v.get("seconds", 0))
+    if isinstance(v, str):
+        try:
+            return int(dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            return 0
+    return 0
+
+
+GROUP_RE = re.compile(r'("group:students"\s*:\s*\[)(.*?)(\])', re.S)
+
+
+def acl_get_students(text):
+    m = GROUP_RE.search(text)
+    if not m:
+        raise ValueError('ACL has no "group:students" array')
+    return re.findall(r'"([^"]+)"', m.group(2))
+
+
+def acl_set_students(text, members):
+    m = GROUP_RE.search(text)
+    if not m:
+        raise ValueError('ACL has no "group:students" array')
+    body = ", ".join(f'"{x}"' for x in sorted(set(members)))
+    return text[: m.start()] + m.group(1) + body + m.group(3) + text[m.end():]
+
+
+def acl_apply(ctx, add=(), remove=()):
+    path = ctx.conf["HS_ACL"]
+    if not os.access(path, os.R_OK):
+        say(f"  [needs sudo or {ctx.conf['ADMIN_USER']}] cannot read {path}")
+        return False
+    with open(path) as f:
+        text = f.read()
+    cur = acl_get_students(text)
+    want = sorted((set(cur) | {f"{a}@" for a in add}) - {f"{r}@" for r in remove})
+    if want == sorted(cur):
+        ok(f"ACL group:students = {cur}")
+        return False
+    new = acl_set_students(text, want)
+    cfgdir = os.path.dirname(path)
+    cand = os.path.join(cfgdir, os.path.basename(path) + ".labops-candidate")
+    cand_in = os.path.join(os.path.dirname(ctx.conf["HS_ACL_IN_CONTAINER"]), os.path.basename(cand))
+
+    def w():
+        st = os.stat(path)
+        C.atomic_write(cand, new, mode=st.st_mode & 0o777, uid=st.st_uid, gid=st.st_gid)
+        try:
+            r = C.run(["docker", "exec", ctx.conf["HS_CONTAINER"], "headscale", "policy", "check", "-f", cand_in], timeout=60)
+            if r.returncode != 0:
+                raise RuntimeError(f"headscale policy check failed: {(r.stderr or r.stdout).strip()[:400]}")
+            shutil.copy2(path, f"{path}.bak.{TS}")
+            os.rename(cand, path)
+        finally:
+            if os.path.exists(cand):
+                os.unlink(cand)
+        C.run(["docker", "restart", ctx.conf["HS_CONTAINER"]], timeout=120)
+        for _ in range(30):
+            if C.run(["curl", "-fsS", "-m", "3", "-o", "/dev/null", ctx.conf["HS_HEALTH_URL"]]).returncode == 0:
+                return
+            time.sleep(1)
+        raise RuntimeError("headscale did not become healthy after restart — check `docker logs headscale`")
+    return act(ctx, f"ACL group:students {cur} -> {want}  (policy check, backup, docker restart headscale)",
+               fn=w, needs_root=not os.access(cfgdir, os.W_OK))
+
+
+def hs_ensure_user(ctx, name):
+    if not ctx.docker:
+        say(f"  [needs docker] Headscale user {name}")
+        return None
+    users = hs_users(ctx)
+    if name in users:
+        ok(f"Headscale user {name} (id {users[name]['id']})")
+        return users[name]["id"]
+    act(ctx, f"headscale users create {name}", cmd=["docker", "exec", ctx.conf["HS_CONTAINER"], "headscale", "users", "create", name],
+        needs_root=False)
+    if ctx.dry:
+        return None
+    return hs_users(ctx).get(name, {}).get("id")
+
+
+def hs_new_key(ctx, name, uid_, force=False):
+    now = time.time()
+    nodes = [n for n in hs_nodes(ctx) if n.get("user", {}).get("name") == name]
+    keys = [k for k in hs_keys(ctx) if k.get("user", {}).get("name") == name
+            and not k.get("used") and _pb_time(k.get("expiration")) > now]
+    if (nodes or keys) and not force:
+        if nodes:
+            ok(f"{name} already has {len(nodes)} Headscale node(s) — no new key (use --new-key to force)")
+        else:
+            ok(f"{name} has an unused valid pre-auth key (id {keys[0]['id']}); the secret is only shown at creation — use --new-key")
+        return None
+    if ctx.dry or uid_ is None:
+        say(f"  [plan] headscale preauthkeys create --user {uid_ or '<new>'} --expiration {ctx.conf['HS_KEY_EXPIRY']} (single-use)")
+        return None
+    k = hs(ctx, "preauthkeys", "create", "--user", str(uid_), "--expiration", ctx.conf["HS_KEY_EXPIRY"])
+    ctx.changed += 1
+    return k.get("key") if isinstance(k, dict) else None
+
+
+# ============================================================================ audit / falco lists
+def student_uids(ctx):
+    uids = set()
+    for n in C.group_members(ctx.conf["STUDENTS_GROUP"]):
+        try:
+            uids.add(pwd.getpwnam(n).pw_uid)
+        except KeyError:
+            pass
+    for u in registry(ctx):
+        if u["role"] == "student":
+            try:
+                uids.add(pwd.getpwnam(u["name"]).pw_uid)
+            except KeyError:
+                pass
+    return sorted(x for x in uids if x >= 1000)
+
+
+def admin_uids(ctx):
+    out = set()
+    for u in registry(ctx):
+        if u["role"] == "admin":
+            try:
+                out.add(pwd.getpwnam(u["name"]).pw_uid)
+            except KeyError:
+                pass
+    try:
+        out.add(pwd.getpwnam(ctx.conf["ADMIN_USER"]).pw_uid)
+    except KeyError:
+        pass
+    return sorted(out)
+
+
+def render_audit_students(uids):
+    lines = ["## Generated by `labctl sync` — execve of every login session of a `students` member.",
+             "## Filter is the audit loginuid (auid), so it survives su/sudo/setuid and covers",
+             "## processes started from cron/tmux/nohup inside the student's session.", ""]
+    for u in uids:
+        for arch in ("b64", "b32"):
+            lines.append(f"-a always,exit -F arch={arch} -S execve,execveat -F auid={u} -k student_exec")
+    return "\n".join(lines) + "\n"
+
+
+def render_audit_setuid():
+    r = C.run(["find", "/", "-xdev", "-type", "f", "(", "-perm", "-4000", "-o", "-perm", "-2000", ")"], timeout=600)
+    paths = sorted(p for p in r.stdout.splitlines() if p.startswith("/") and " " not in p)
+    skip = {"/usr/bin/sudo", "/usr/bin/su", "/usr/bin/pkexec"}  # already keyed priv_esc in 50-labops.rules
+    lines = ["## Generated by `labctl audit-rules` — exec of setuid/setgid binaries by logged-in users."]
+    for p in paths:
+        if p in skip:
+            continue
+        lines.append(f"-a always,exit -F path={p} -F perm=x -F auid>=1000 -F auid!=unset -k setuid_exec")
+    return "\n".join(lines) + "\n"
+
+
+def render_falco_lists(students, admins):
+    s = ", ".join(str(x) for x in students) or "999999999"
+    a = ", ".join(str(x) for x in admins) or "999999999"
+    return ("# Generated by `labctl sync` — do not edit. Loaded before labops_rules.yaml.\n"
+            f"- list: labops_student_uids\n  items: [{s}]\n\n"
+            f"- list: labops_admin_uids\n  items: [{a}]\n")
+
+
+def write_if_changed(ctx, path, content, desc, after=None):
+    try:
+        with open(path) as f:
+            if f.read() == content:
+                ok(f"{desc} up to date ({path})")
+                return False
+    except OSError:
+        pass
+    if not os.path.isdir(os.path.dirname(path)):
+        say(f"  [skip] {desc}: {os.path.dirname(path)} missing (component not installed)")
+        return False
+
+    def w():
+        C.atomic_write(path, content, mode=0o640 if "/audit/" in path else 0o644, uid=0, gid=0)
+        if after:
+            r = C.run(after, timeout=120)
+            if r.returncode != 0:
+                raise RuntimeError(f"{' '.join(after)}: {(r.stderr or r.stdout).strip()[:300]}")
+    return act(ctx, f"write {path} ({desc})", fn=w)
+
+
+def sync_monitoring_lists(ctx, setuid=False):
+    su = student_uids(ctx)
+    write_if_changed(ctx, ctx.conf["AUDIT_STUDENT_RULES"], render_audit_students(su), f"audit execve rules for uids {su}",
+                     after=["augenrules", "--load"] if shutil.which("augenrules") else None)
+    if setuid:
+        if ctx.root:
+            write_if_changed(ctx, ctx.conf["AUDIT_SETUID_RULES"], render_audit_setuid(), "audit setuid/setgid exec rules",
+                             after=["augenrules", "--load"] if shutil.which("augenrules") else None)
+        else:
+            say("  [needs sudo] scan setuid/setgid binaries")
+    write_if_changed(ctx, ctx.conf["FALCO_LIST_FILE"], render_falco_lists(su, admin_uids(ctx)),
+                     "falco student/admin uid lists (falco hot-reloads)")
+
+
+# ============================================================================ per-user OS state
+def ensure_student_os(ctx, u):
+    name = u["name"]
+    conf = ctx.conf
+    if not C.user_exists(name):
+        gecos = C.sanitize_text(u.get("full_name") or name, 60).replace(":", " ").replace(",", " ")
+        act(ctx, f"create account {name} (no password, /bin/bash)",
+            cmd=["adduser", "--disabled-password", "--gecos", gecos, "--shell", "/bin/bash", name])
+        if ctx.dry or not C.user_exists(name):
+            for g in conf["STUDENT_GROUPS"].split(","):
+                say(f"  [plan] usermod -aG {g} {name}")
+            return
+    p = pwd.getpwnam(name)
+    for g in conf["STUDENT_GROUPS"].split(","):
+        if C.user_in_group(name, g):
+            continue
+        act(ctx, f"usermod -aG {g} {name}", cmd=["usermod", "-aG", g, name])
+    home = p.pw_dir
+    try:
+        mode = os.stat(home).st_mode & 0o777
+        if mode & 0o027:
+            act(ctx, f"chmod 750 {home} (was {oct(mode)})", cmd=["chmod", "750", home])
+    except OSError:
+        pass
+    key = u.get("ssh_pubkey")
+    if key:
+        ak = os.path.join(home, ".ssh", "authorized_keys")
+        if not ctx.root:
+            say(f"  [needs sudo] ensure key in {ak}")
+        else:
+            try:
+                have = open(ak).read().splitlines()
+            except OSError:
+                have = []
+            if key.strip() in (h.strip() for h in have):
+                ok("authorized_keys contains registry key")
+            else:
+                def addkey():
+                    os.makedirs(os.path.dirname(ak), mode=0o700, exist_ok=True)
+                    with open(ak, "a") as f:
+                        f.write(key.strip() + "\n")
+                    os.chown(os.path.dirname(ak), p.pw_uid, p.pw_gid)
+                    os.chown(ak, p.pw_uid, p.pw_gid)
+                    os.chmod(os.path.dirname(ak), 0o700)
+                    os.chmod(ak, 0o600)
+                act(ctx, f"append registry key to {ak}", fn=addkey)
+    exp = u.get("expires")
+    cur = shadow_expire(name)
+    if exp:
+        want = dt.date.fromisoformat(str(exp))
+        if cur == want:
+            ok(f"expiry {want}")
+        elif cur == "?" and not ctx.root:
+            say(f"  [needs sudo] verify expiry = {want} (cannot read /etc/shadow)")
+        else:
+            act(ctx, f"chage -E {want} {name} (was {cur})", cmd=["chage", "-E", str(want), name])
+    elif is_expired(cur):
+        say(f"  !! {name} is active in registry but account expired {cur} — set `expires:` or run `labctl extend`")
+    d = os.path.join(conf["DATA_ROOT"], name)
+    if os.path.isdir(d) and not os.path.islink(d):
+        st = os.stat(d)
+        if st.st_uid != p.pw_uid or st.st_mode & 0o777 != 0o700:
+            act(ctx, f"fix owner/mode of {d}", cmd=["install", "-d", "-m", "700", "-o", name, "-g", str(p.pw_gid), d])
+        else:
+            ok(f"{d} 700")
+    else:
+        act(ctx, f"create {d} (700)", cmd=["install", "-d", "-m", "700", "-o", name, "-g", str(p.pw_gid), d])
+    link = os.path.join(home, "data")
+    if not os.access(home, os.X_OK):
+        say(f"  [needs sudo] verify ~/data symlink ({home} not readable)")
+    elif os.path.islink(link) and os.readlink(link) == d:
+        ok(f"~/data -> {d}")
+    elif os.path.lexists(link) and not os.path.islink(link):
+        say(f"  !! {link} exists and is not a symlink — leaving it")
+    elif ctx.root or ctx.dry:
+        act(ctx, f"ln -sfn {d} {link}", fn=lambda: (os.path.lexists(link) and os.unlink(link), os.symlink(d, link),
+                                                     os.lchown(link, p.pw_uid, p.pw_gid)))
+    else:
+        say(f"  [needs sudo] ~/data symlink for {name}")
+
+
+def ensure_locked(ctx, name):
+    if not C.user_exists(name):
+        ok(f"{name}: no system account")
+        return
+    cur = shadow_expire(name)
+    if is_expired(cur):
+        ok(f"{name} locked/expired ({cur})")
+        return
+    if cur == "?" and not ctx.root:
+        say(f"  [needs sudo] verify {name} is locked+expired (cannot read /etc/shadow)")
+        return
+    act(ctx, f"lock {name}: usermod -L -e 1 (was expiry {cur})", cmd=["usermod", "-L", "-e", "1", name])
+
+
+# ============================================================================ commands
+def cmd_sync(ctx, only=None, new_key=False, build_envs=None):
+    users = registry(ctx)
+    if only:
+        users = [u for u in users if u["name"] == only]
+        if not users:
+            sys.exit(f"{only}: not in registry {ctx.registry_path}")
+    allow_add, allow_rm, acl_add, acl_rm, onboard = [], [], [], [], []
+    for u in users:
+        name = u["name"]
+        say(f"== {name} ({u['role']}, {u['state']})")
+        if u["role"] == "admin":
+            allow_add.append(name)
+            ok("admin — only ensured in AllowUsers")
+            continue
+        if u["state"] == "active":
+            ensure_student_os(ctx, u)
+            allow_add.append(name)
+            if u.get("headscale"):
+                hid = hs_ensure_user(ctx, name)
+                acl_add.append(name)
+                if only:
+                    onboard.append((u, hid))
+            else:
+                acl_rm.append(name)
+        else:
+            if protected(ctx, name):
+                say(f"  !! refusing to lock protected account {name}")
+                continue
+            ensure_locked(ctx, name)
+            allow_rm.append(name)
+            acl_rm.append(name)
+    say("== sshd AllowUsers")
+    allowusers_apply(ctx, add=allow_add, remove=allow_rm)
+    say("== Headscale ACL")
+    if ctx.docker or ctx.dry:
+        try:
+            acl_apply(ctx, add=acl_add, remove=acl_rm)
+        except (ValueError, RuntimeError, OSError) as e:
+            say(f"  !! ACL: {e}")
+            ctx.errors += 1
+    else:
+        say("  [needs docker] ACL update")
+    say("== monitoring lists (auditd, falco)")
+    sync_monitoring_lists(ctx)
+    for u, hid in onboard:
+        key = None
+        if ctx.docker:
+            try:
+                key = hs_new_key(ctx, u["name"], hid, force=new_key)
+            except RuntimeError as e:
+                say(f"  !! {e}")
+        print_onboarding(ctx, u, key)
+    if build_envs and only:
+        act(ctx, f"build envs for {only} with {build_envs}",
+            cmd=["sudo", "-u", only, "-H", "bash", build_envs, f"/home/{only}/venvs", f"/home/{only}/code"])
+    summary(ctx)
+
+
+def print_onboarding(ctx, u, key):
+    c = ctx.conf
+    say("")
+    say(f"---------------- onboarding: {u['name']} ----------------")
+    say("1) Install Tailscale, then join the lab tailnet:")
+    say(f"   tailscale up --login-server {c['HS_LOGIN_SERVER']} --authkey {key or '<run: labctl add ' + u['name'] + ' --new-key>'}")
+    say(f"   (single-use key, valid {c['HS_KEY_EXPIRY']}; keep it secret)")
+    say(f"2) SSH:  ssh -p {c['SSH_PORT']} {u['name']}@{c['SSH_HOST']}")
+    say(f"3) Data: ~/data -> {c['DATA_ROOT']}/{u['name']} (private, 700)")
+    say(f"   Account expires: {u.get('expires') or 'not set'}")
+    say("   Need a system package? `labreq install <pkg> --reason \"...\"`")
+    say("------------------------------------------------------")
+
+
+def summary(ctx):
+    say("")
+    if ctx.dry:
+        say("dry-run: nothing changed.")
+    say(f"changes: {ctx.changed}   errors: {ctx.errors}   needs-sudo: {len(ctx.skipped)}")
+    if ctx.skipped:
+        say("  re-run with sudo to apply the skipped steps.")
+    if ctx.errors:
+        sys.exit(1)
+
+
+def cmd_remove(ctx, name, yes=False):
+    u = reg_user(ctx, name)
+    if u["role"] == "admin" or protected(ctx, name):
+        sys.exit(f"refusing to remove protected/admin account {name}")
+    if not (yes or ctx.dry):
+        if not sys.stdin.isatty():
+            sys.exit("non-interactive: pass --yes")
+        if input(f"Offboard {name}? (lock, kill sessions, archive data) [y/N] ").strip().lower() != "y":
+            sys.exit("aborted")
+    say(f"== offboard {name}")
+    if C.user_exists(name):
+        ensure_locked(ctx, name)
+        r = C.run(["pgrep", "-u", name])
+        if r.stdout.strip():
+            act(ctx, f"terminate sessions + kill processes of {name}",
+                fn=lambda: (C.run(["loginctl", "terminate-user", name]), time.sleep(1), C.run(["pkill", "-KILL", "-u", name])))
+        else:
+            ok("no running processes")
+    allowusers_apply(ctx, remove=[name])
+    d = os.path.join(ctx.conf["DATA_ROOT"], name)
+    if os.path.isdir(d) and not os.path.islink(d):
+        arch = os.path.join(ctx.conf["DATA_ROOT"], "_archive")
+        dst = os.path.join(arch, f"{name}-{TODAY.strftime('%Y%m%d')}")
+        if os.path.exists(dst):
+            dst += time.strftime("-%H%M%S")
+
+        def mv():
+            os.makedirs(arch, mode=0o700, exist_ok=True)
+            os.chmod(arch, 0o700)
+            os.rename(d, dst)
+        act(ctx, f"archive {d} -> {dst} (no deletion)", fn=mv)
+    else:
+        ok(f"no data dir {d}")
+    say("== Headscale")
+    if ctx.docker:
+        try:
+            for n in hs_nodes(ctx):
+                if n.get("user", {}).get("name") == name:
+                    act(ctx, f"expire node {n.get('given_name')} (id {n['id']})", needs_root=False,
+                        cmd=["docker", "exec", ctx.conf["HS_CONTAINER"], "headscale", "nodes", "expire", "-i", str(n["id"])])
+            now = time.time()
+            for k in hs_keys(ctx):
+                if k.get("user", {}).get("name") == name and _pb_time(k.get("expiration")) > now:
+                    act(ctx, f"expire pre-auth key id {k['id']}", needs_root=False,
+                        cmd=["docker", "exec", ctx.conf["HS_CONTAINER"], "headscale", "preauthkeys", "expire", "-i", str(k["id"])])
+            acl_apply(ctx, remove=[name])
+        except (RuntimeError, ValueError) as e:
+            say(f"  !! {e}")
+            ctx.errors += 1
+    else:
+        say("  [needs docker] Headscale cleanup")
+    registry_update(ctx, name, "state", "removed")
+    sync_monitoring_lists(ctx)
+    summary(ctx)
+
+
+def cmd_extend(ctx, name, date):
+    try:
+        d = dt.date.fromisoformat(date)
+    except ValueError:
+        sys.exit("date must be YYYY-MM-DD")
+    if d <= TODAY:
+        sys.exit("date must be in the future")
+    u = reg_user(ctx, name)
+    if u["role"] == "admin":
+        sys.exit("admin accounts have no expiry management")
+    act(ctx, f"chage -E {d} {name}", cmd=["chage", "-E", str(d), name])
+    registry_update(ctx, name, "expires", str(d))
+    if u["state"] != "active":
+        say(f"  note: {name} is '{u['state']}' in the registry — set state: active and run `sudo labctl add {name}` to re-enable")
+    summary(ctx)
+
+
+def cmd_list(ctx):
+    users = registry(ctx)
+    nodes = []
+    if ctx.docker:
+        try:
+            nodes = hs_nodes(ctx)
+        except RuntimeError:
+            pass
+    allow = []
+    try:
+        m = ALLOW_RE.search(open(ctx.conf["SSHD_ALLOWUSERS_FILE"]).read())
+        allow = m.group(2).split() if m else []
+    except OSError:
+        pass
+    fmt = "{:<15} {:<7} {:<8} {:<9} {:<16} {:<17} {:<5} {:<9} {}"
+    say(fmt.format("USER", "ROLE", "REG", "ACCOUNT", "EXPIRES", "LAST LOGIN", "SSH", "HS ONLINE", "NOTES"))
+    known = set()
+    for u in users:
+        n = u["name"]
+        known.add(n)
+        if not C.user_exists(n):
+            acct = "missing"
+        else:
+            e = shadow_expire(n)
+            acct = "expired" if is_expired(e) else ("active" if e != "?" else "?")
+        e = shadow_expire(n) if C.user_exists(n) else None
+        exp = str(e) if isinstance(e, dt.date) else (str(u.get("expires") or "-") + ("(reg)" if e == "?" else ""))
+        un = [x for x in nodes if x.get("user", {}).get("name") == n]
+        hsn = f"{sum(1 for x in un if x.get('online'))}/{len(un)}" if (ctx.docker and u.get("headscale")) else ("-" if ctx.docker else "?")
+        say(fmt.format(n, u["role"], u["state"], acct, exp[:16], lastlog(n), "yes" if n in allow else "no", hsn,
+                       C.sanitize_text(u.get("notes") or "", 40)))
+    extra = [m for m in C.group_members(ctx.conf["STUDENTS_GROUP"]) if m not in known]
+    extra += [a for a in allow if a not in known and a not in extra]
+    if extra:
+        say(f"\nnot in registry (unmanaged): {', '.join(extra)}")
+    if not ctx.root:
+        say("\n(ACCOUNT/EXPIRES from /etc/shadow need sudo; '(reg)' = registry value)")
+
+
+# ============================================================================ GPU report
+def cmd_report(ctx, days=7):
+    db = ctx.conf["GPU_DB"]
+    if not os.path.exists(db):
+        sys.exit(f"{db} not found (collector not installed yet?)")
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    since = int(time.time() - days * 86400)
+    iv = int(ctx.conf["GPU_INTERVAL_S"])
+    q = """
+    WITH per_ts AS (SELECT user, ts, SUM(vram_mib) vram, COUNT(DISTINCT pid) jobs FROM samples WHERE ts>=? GROUP BY user, ts)
+    SELECT p.user, (SELECT COUNT(*) FROM samples s WHERE s.user=p.user AND s.ts>=?)*?/3600.0 proc_h,
+           COUNT(*)*?/3600.0 wall_h, MAX(vram), MAX(jobs) FROM per_ts p GROUP BY p.user ORDER BY wall_h DESC"""
+    rows = con.execute(q, (since, since, iv, iv)).fetchall()
+    say(f"GPU usage, last {days} day(s)  (sample interval {iv}s)")
+    fmt = "{:<15} {:>10} {:>10} {:>11} {:>8}"
+    say(fmt.format("USER", "GPU-hours", "proc-hours", "peak VRAM", "max jobs"))
+    for user, proc_h, wall_h, vram, jobs in rows:
+        say(fmt.format(user, f"{wall_h:.1f}", f"{proc_h:.1f}", f"{(vram or 0)/1024:.1f} GiB", jobs))
+    if not rows:
+        say("  (no GPU processes recorded)")
+    long_ = con.execute("""SELECT user, pid, start_ts, MAX(ts), MAX(vram_mib), cmd FROM samples WHERE ts>=?
+                           GROUP BY user, pid, start_ts HAVING MAX(ts)-start_ts > 86400 ORDER BY start_ts""", (since,)).fetchall()
+    say("\nJobs running > 24h:")
+    now = time.time()
+    for user, pid, st, last, vram, cmd in long_:
+        state = "running" if now - last < 3 * iv else "ended"
+        say(f"  {user:<14} pid {pid:<8} {(last-st)/3600:6.1f}h  {vram/1024:5.1f} GiB  {state:<7} {C.sanitize_text(cmd, 60)}")
+    if not long_:
+        say("  none")
+    say("\n(GPU-hours = wall time with >=1 process on the GPU; proc-hours counts concurrent processes separately)")
+
+
+# ============================================================================ request queue (review as martin)
+def _rq():
+    import labops_requests as R
+    return R
+
+
+def _validate(ctx, r):
+    if r.get("action") != "apt-install":
+        return None, ["'other' request: never auto-executed — handle manually, then approve to acknowledge"]
+    import labops_apt as A
+    good, errs, sim = A.validate(r.get("args") or [], set(ctx.conf["APT_ALLOWED_HOSTS"].split(",")),
+                                 int(ctx.conf["REQ_MAX_PACKAGES"]), int(ctx.conf["REQ_MAX_NEW_PACKAGES"]))
+    return good, (errs if not good else [f"OK: would install {len(sim['inst'])} package(s): " +
+                                         ", ".join(i[0] for i in sim["inst"][:15])])
+
+
+def cmd_requests(ctx, history=False, rid=None):
+    R = _rq()
+    if not os.access(ctx.conf["REQ_DIR"], os.R_OK):
+        sys.exit(f"cannot read {ctx.conf['REQ_DIR']} (run as {ctx.conf['ADMIN_USER']} after install)")
+    reqs = R.list_requests(ctx.conf)
+    if rid is not None:
+        reqs = [r for r in reqs if int(r["id"]) == rid]
+        for r in reqs:
+            print(json.dumps({k: v for k, v in r.items() if k != "output"}, indent=1, ensure_ascii=False))
+            if r.get("output"):
+                say("--- output (tail) ---\n" + r["output"][-3000:])
+        return
+    pend = [r for r in reqs if r.get("status") == "pending"]
+    decided = set()
+    try:
+        decided = {int(n.split(".")[0]) for n in os.listdir(ctx.conf["REQ_DECISIONS"]) if R.ID_FILE_RE.match(n)}
+    except OSError:
+        pass
+    say(f"Pending requests: {len(pend)}")
+    for r in pend:
+        say(R.fmt_request(r) + ("   [decision queued]" if int(r["id"]) in decided else ""))
+        say(f"       reason: {C.sanitize_text(r.get('reason', ''), 200)}")
+        good, notes = _validate(ctx, r)
+        for n in notes:
+            say(f"       {'check' if good is not False else 'FAIL '}: {n}")
+    if history:
+        say("\nHistory:")
+        for r in reqs:
+            if r.get("status") != "pending":
+                say(R.fmt_request(r) + (f"   ({C.sanitize_text(r.get('result',''), 80)})" if r.get("result") else ""))
+
+
+def _decide(ctx, rid, decision, reason):
+    R = _rq()
+    me = pwd.getpwuid(os.getuid()).pw_name
+    if me != ctx.conf["ADMIN_USER"]:
+        sys.exit(f"decisions must be made as {ctx.conf['ADMIN_USER']} (the executor only trusts files owned by that user)")
+    try:
+        r = R.load_request(ctx.conf, rid)
+    except OSError:
+        sys.exit(f"request #{rid} not found")
+    if r.get("status") != "pending":
+        sys.exit(f"request #{rid} is {r.get('status')}, not pending")
+    if decision == "approve" and r.get("action") == "apt-install":
+        good, notes = _validate(ctx, r)
+        for n in notes:
+            say(("check: " if good else "FAIL : ") + n)
+        if not good:
+            sys.exit(f"#{rid} fails validation — reject it instead (labctl reject {rid} --reason ...)")
+    dec = {"id": int(rid), "decision": decision, "sha256": R.core_hash(r), "reason": C.sanitize_text(reason or "", 300),
+           "ts": int(time.time())}
+    path = os.path.join(ctx.conf["REQ_DECISIONS"], f"{int(rid)}.json")
+    if ctx.dry:
+        say(f"[plan] write {path}: {dec}")
+        return
+    C.atomic_write(path, json.dumps(dec) + "\n", mode=0o600, tmpdir=ctx.conf["REQ_DECISIONS_TMP"])
+    say(f"#{rid} {decision}d — the root executor picks it up within seconds "
+        f"(`labctl requests --history` / journalctl -u labops-executor)")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="labctl", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--registry")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    sp.add_parser("sync")
+    a = sp.add_parser("add")
+    a.add_argument("user")
+    a.add_argument("--new-key", action="store_true", help="always create a fresh Headscale pre-auth key")
+    a.add_argument("--build-envs", metavar="SCRIPT", help="run SCRIPT as the user afterwards (e.g. build-envs.sh)")
+    r = sp.add_parser("remove")
+    r.add_argument("user")
+    r.add_argument("--yes", action="store_true")
+    e = sp.add_parser("extend")
+    e.add_argument("user")
+    e.add_argument("date")
+    sp.add_parser("list")
+    rp = sp.add_parser("report")
+    rp.add_argument("--days", type=int, default=7)
+    sp.add_parser("audit-rules", help="regenerate audit (incl. setuid scan) + falco uid lists")
+    q = sp.add_parser("requests")
+    q.add_argument("id", nargs="?", type=int)
+    q.add_argument("--history", action="store_true")
+    ap_ = sp.add_parser("approve")
+    ap_.add_argument("id", type=int)
+    ap_.add_argument("--reason", default="")
+    rj = sp.add_parser("reject")
+    rj.add_argument("id", type=int)
+    rj.add_argument("--reason", required=True)
+    args = ap.parse_args()
+    ctx = Ctx(args)
+    if args.cmd == "sync":
+        cmd_sync(ctx)
+    elif args.cmd == "add":
+        cmd_sync(ctx, only=args.user, new_key=args.new_key, build_envs=args.build_envs)
+    elif args.cmd == "remove":
+        cmd_remove(ctx, args.user, args.yes)
+    elif args.cmd == "extend":
+        cmd_extend(ctx, args.user, args.date)
+    elif args.cmd == "list":
+        cmd_list(ctx)
+    elif args.cmd == "report":
+        cmd_report(ctx, args.days)
+    elif args.cmd == "audit-rules":
+        sync_monitoring_lists(ctx, setuid=True)
+        summary(ctx)
+    elif args.cmd == "requests":
+        cmd_requests(ctx, args.history, args.id)
+    elif args.cmd == "approve":
+        _decide(ctx, args.id, "approve", args.reason)
+    elif args.cmd == "reject":
+        _decide(ctx, args.id, "reject", args.reason)
+
+
+if __name__ == "__main__":
+    import signal
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)

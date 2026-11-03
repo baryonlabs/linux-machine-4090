@@ -1,0 +1,142 @@
+#!/usr/bin/python3 -I
+"""labops-reqd — per-connection handler for /run/labops/req.sock (systemd Accept=yes, runs as user `labops`).
+
+The caller's identity comes ONLY from SO_PEERCRED on the connected socket (kernel-provided uid);
+nothing in the request body can name a user. Protocol: one JSON line in, one JSON line out.
+  {"op":"submit","action":"apt-install","args":["pkg",...],"reason":"..."}
+  {"op":"submit","action":"other","reason":"free text"}
+  {"op":"status"} | {"op":"status","id":N} | {"op":"cancel","id":N}
+"""
+import json
+import os
+import pwd
+import socket
+import struct
+import sys
+import time
+
+sys.path.insert(0, "/opt/labops/lib")
+import labops_common as C  # noqa: E402
+import labops_requests as R  # noqa: E402
+
+MAX_IN = 16 * 1024
+
+
+def peer_uid(sock):
+    pid, uid, gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+    return uid, pid
+
+
+def allowed(conf, uid):
+    try:
+        name = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return None
+    extra = {int(x) for x in conf["REQ_EXTRA_UIDS"].split(",") if x.strip().isdigit()}
+    if uid in extra or C.user_in_group(name, conf["STUDENTS_GROUP"]):
+        return name
+    return None
+
+
+def public(r):
+    out = {k: r.get(k) for k in ("id", "ts", "action", "args", "reason", "status", "result", "updated")}
+    if r.get("output"):
+        out["output_tail"] = "\n".join(r["output"].splitlines()[-15:])
+    return out
+
+
+def handle(conf, uid, user, msg):
+    op = msg.get("op")
+    if op == "status":
+        mine = [r for r in R.list_requests(conf) if r.get("uid") == uid]
+        if msg.get("id") is not None:
+            mine = [r for r in mine if r.get("id") == int(msg["id"])]
+            if not mine:
+                return {"ok": False, "error": "no such request (of yours)"}
+        return {"ok": True, "requests": [public(r) for r in mine[-30:]]}
+    if op == "cancel":
+        rid = int(msg.get("id", -1))
+        with R.Lock(conf):
+            try:
+                r = R.load_request(conf, rid)
+            except (OSError, ValueError):
+                return {"ok": False, "error": "no such request"}
+            if r.get("uid") != uid:
+                return {"ok": False, "error": "no such request (of yours)"}
+            if r.get("status") != "pending":
+                return {"ok": False, "error": f"request is {r.get('status')}"}
+            r.update(status="cancelled", result="cancelled by requester", updated=int(time.time()))
+            R.write_request(conf, r)
+        R.append_log(conf, f"cancel id={rid} uid={uid} user={user}")
+        return {"ok": True, "id": rid, "status": "cancelled"}
+    if op != "submit":
+        return {"ok": False, "error": "unknown op"}
+    action = msg.get("action")
+    if action not in R.ACTIONS:
+        return {"ok": False, "error": f"action must be one of {R.ACTIONS}"}
+    reason = C.sanitize_text(msg.get("reason") or "", 1000 if action == "other" else 500)
+    if len(reason) < 3:
+        return {"ok": False, "error": "a --reason (>= 3 chars) is required"}
+    args = []
+    if action == "apt-install":
+        import labops_apt as A
+        args = msg.get("args")
+        if not isinstance(args, list) or not args or not all(isinstance(a, str) for a in args):
+            return {"ok": False, "error": "give at least one package name"}
+        if len(args) > int(conf["REQ_MAX_PACKAGES"]):
+            return {"ok": False, "error": f"at most {conf['REQ_MAX_PACKAGES']} packages per request"}
+        bad = [a for a in args if not A.PKG_RE.match(a)]
+        if bad:
+            return {"ok": False, "error": f"invalid package name(s): {', '.join(repr(b)[:70] for b in bad[:5])}"}
+        den = [a for a in args if A.denied(a)]
+        if den:
+            return {"ok": False, "error": f"not allowed via the queue (ask the admin directly): {', '.join(den)}"}
+        args = sorted(set(args))
+    with R.Lock(conf):
+        reqs = R.list_requests(conf)
+        pend = [r for r in reqs if r.get("uid") == uid and r.get("status") == "pending"]
+        if len(pend) >= int(conf["REQ_MAX_PENDING"]):
+            return {"ok": False, "error": f"you already have {len(pend)} pending requests (max {conf['REQ_MAX_PENDING']})"}
+        rid = R.next_id(conf)
+        req = {"id": rid, "uid": uid, "user": user, "ts": int(time.time()), "action": action, "args": args,
+               "reason": reason, "status": "pending", "notified": False}
+        req["sha256"] = R.core_hash(req)
+        R.write_request(conf, req)
+    R.append_log(conf, f"submit id={rid} uid={uid} user={user} action={action} args={args} reason={reason!r}")
+    print(f"labops-reqd: submit id={rid} uid={uid} user={user} action={action} args={args}", file=sys.stderr)
+    return {"ok": True, "id": rid, "status": "pending"}
+
+
+def main():
+    conf = C.load_conf()
+    sock = socket.socket(fileno=os.dup(0))
+    sock.settimeout(10)
+    try:
+        uid, pid = peer_uid(sock)
+        user = allowed(conf, uid)
+        if user is None:
+            resp = {"ok": False, "error": "only members of the students group can file requests"}
+        else:
+            buf = b""
+            while b"\n" not in buf and len(buf) <= MAX_IN:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+            if len(buf) > MAX_IN:
+                resp = {"ok": False, "error": "request too large"}
+            else:
+                try:
+                    msg = json.loads(buf.split(b"\n", 1)[0].decode("utf-8", "replace"))
+                    resp = handle(conf, uid, user, msg) if isinstance(msg, dict) else {"ok": False, "error": "bad json"}
+                except (ValueError, TypeError) as e:
+                    resp = {"ok": False, "error": f"bad request: {type(e).__name__}"}
+        sock.sendall((json.dumps(resp) + "\n").encode())
+    except (OSError, socket.timeout) as e:
+        print(f"labops-reqd: {type(e).__name__}: {e}", file=sys.stderr)
+    finally:
+        sock.close()
+
+
+if __name__ == "__main__":
+    main()

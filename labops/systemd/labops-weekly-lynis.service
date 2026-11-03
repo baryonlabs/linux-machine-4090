@@ -1,0 +1,11 @@
+[Unit]
+Description=labops: weekly lynis audit to Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/labops/bin/labops-weekly-lynis
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=3600
