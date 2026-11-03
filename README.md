@@ -27,6 +27,10 @@
 `secrets/`(Discord 웹훅), `email-reply-student1.txt`(학생 Headscale 키), `fix-control-plane.sh`(관리자 재사용 키).
 새 비밀값은 저장소에 넣지 말고 서버의 root 600 파일로만 둔다.
 
+GitHub secret scanning/push protection은 이 private 저장소에서 사용할 수 없어서(요금제), 로컬 커밋 훅으로 대신 막는다.
+새로 clone하면 한 번 실행: `git config core.hooksPath .githooks` (gitleaks가 설치돼 있으면 함께 검사).
+Dependabot 취약점 알림은 켜져 있다.
+
 ## 자주 쓰는 작업
 
 ```bash
