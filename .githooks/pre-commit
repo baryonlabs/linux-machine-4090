@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Block commits that contain secrets (local substitute for GitHub push protection,
+# which is not available for this private repo). Enable per clone:
+#   git config core.hooksPath .githooks
+set -uo pipefail
+PATTERNS='hskey-auth-[A-Za-z0-9_-]{20,}|discord(app)?\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+|hf_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|sk-(ant-|proj-)?[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|authtoken: *[A-Za-z0-9_]{20,}|C[0-9A-Za-z]{29}\b'
+hits=$(git diff --cached -U0 --no-color | grep -E '^\+' | grep -vE '^\+\+\+' | grep -nE "$PATTERNS" || true)
+if [ -n "$hits" ]; then
+  echo "pre-commit: possible secret in staged changes — commit blocked:" >&2
+  echo "$hits" | sed -E 's/(.{0,12})([A-Za-z0-9_\/+-]{12})[A-Za-z0-9_\/+-]+/\1\2…[masked]/g' | cut -c1-160 >&2
+  echo "Move it to a root-600 file on the server / secrets/ (gitignored). Override only if sure: git commit --no-verify" >&2
+  exit 1
+fi
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner || exit 1
+fi
