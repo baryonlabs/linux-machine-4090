@@ -1,0 +1,10 @@
+[Unit]
+Description=labops: run the executor when the admin queues a decision or a student files a request
+
+[Path]
+DirectoryNotEmpty=/var/lib/labops/decisions
+PathChanged=/var/lib/labops/requests
+Unit=labops-executor.service
+
+[Install]
+WantedBy=paths.target

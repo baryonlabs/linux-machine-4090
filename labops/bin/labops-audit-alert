@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""High-signal auditd keys → Discord, every 5 min (incremental via ausearch --checkpoint). Run as root.
+Covers what Falco cannot express exactly — setsockopt(IPPROTO_IP, IP_OPTIONS) (CVE-2026-98432) — plus
+kernel module loads, identity/sudoers/sshd config writes and failed /etc/shadow reads by users.
+   --print   print instead of posting"""
+import argparse
+import collections
+import os
+import socket
+import sys
+
+for _p in ("/opt/labops/lib", os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib")):
+    if os.path.isdir(_p):
+        sys.path.insert(0, _p)
+import labops_audit as AU  # noqa: E402
+import labops_common as C  # noqa: E402
+
+KEYS = {
+    "cve_2026_98432": "CRITICAL setsockopt(IP_OPTIONS) — CVE-2026-98432 exploit attempt?",
+    "modules": "kernel module load/unload by a logged-in user",
+    "identity": "write to passwd/shadow/group",
+    "sudoers": "write to sudoers",
+    "sshd_config": "write to sshd config",
+    "shadow_read": "read of /etc/shadow by a logged-in user",
+    "audit_config": "audit configuration changed",
+    "labops_config": "labops configuration changed",
+}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--print", action="store_true")
+    a = ap.parse_args()
+    conf = C.load_conf()
+    chkdir = os.path.join(conf["STATE_DIR"], "audit-checkpoints")
+    os.makedirs(chkdir, mode=0o700, exist_ok=True)
+    lines = []
+    for key, desc in KEYS.items():
+        chk = os.path.join(chkdir, key)
+        first = not os.path.exists(chk)
+        evs, _ = AU.search(key, checkpoint=chk, start="recent" if first else None)
+        if not evs:
+            continue
+        who = collections.Counter()
+        samples = []
+        for e in evs:
+            s = e["syscall"]
+            u = C.uid_name(s.get("auid", "?")) if s.get("auid") not in (None, "4294967295") else "system"
+            who[u] += 1
+            if len(samples) < 3:
+                samples.append(f"{u} {s.get('comm', '?')} ({s.get('exe', '?')}) success={s.get('success', '?')}")
+        lines.append(f"**{key}** ×{len(evs)} — {desc}")
+        lines.append("  by " + ", ".join(f"{u}:{n}" for u, n in who.most_common(5)))
+        lines += [f"  e.g. {C.sanitize_text(x, 160)}" for x in samples]
+    if not lines:
+        return
+    text = f"__**labops audit alert — {socket.gethostname()}**__\n" + "\n".join(lines) + \
+        "\n(details: `sudo ausearch -i -k <key> -ts recent`)"
+    if a.print:
+        print(text)
+    else:
+        C.discord_post(text, conf)
+
+
+if __name__ == "__main__":
+    main()

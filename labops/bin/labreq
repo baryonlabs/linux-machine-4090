@@ -1,0 +1,89 @@
+#!/usr/bin/python3 -I
+"""labreq — ask the lab admin for a privileged action (you never get sudo; the admin reviews every request).
+
+  labreq install <pkg> [<pkg>...] --reason "why you need it"   Ubuntu-archive packages only
+  labreq other "free text describing what you need"           handled manually by the admin
+  labreq status [id]                                          your requests and their results
+  labreq cancel <id>
+"""
+import argparse
+import json
+import socket
+import sys
+import time
+
+SOCK = "/run/labops/req.sock"
+
+
+def call(msg):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(20)
+    try:
+        s.connect(SOCK)
+    except OSError as e:
+        sys.exit(f"labreq: cannot reach the request service ({e.strerror}). Tell the admin.")
+    s.sendall((json.dumps(msg) + "\n").encode())
+    buf = b""
+    while b"\n" not in buf:
+        c = s.recv(65536)
+        if not c:
+            break
+        buf += c
+    s.close()
+    try:
+        return json.loads(buf.decode() or "{}")
+    except ValueError:
+        sys.exit("labreq: bad response from service")
+
+
+def show(r, verbose=False):
+    what = ("install " + " ".join(r.get("args") or [])) if r.get("action") == "apt-install" else "other"
+    print(f"#{r['id']:<5} {r.get('status', '?'):<12} {time.strftime('%Y-%m-%d %H:%M', time.localtime(r.get('ts', 0)))}  {what}")
+    print(f"       reason: {r.get('reason', '')}")
+    if r.get("result"):
+        print(f"       result: {r['result']}")
+    if verbose and r.get("output_tail"):
+        print("       ---- output (tail) ----")
+        for ln in r["output_tail"].splitlines():
+            print(f"       {ln}")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="labreq", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    i = sp.add_parser("install", help="request Ubuntu package installation")
+    i.add_argument("packages", nargs="+")
+    i.add_argument("--reason", "-r", required=True)
+    o = sp.add_parser("other", help="free-text request (handled manually)")
+    o.add_argument("text")
+    st = sp.add_parser("status")
+    st.add_argument("id", nargs="?", type=int)
+    c = sp.add_parser("cancel")
+    c.add_argument("id", type=int)
+    a = ap.parse_args()
+    if a.cmd == "install":
+        resp = call({"op": "submit", "action": "apt-install", "args": a.packages, "reason": a.reason})
+    elif a.cmd == "other":
+        resp = call({"op": "submit", "action": "other", "reason": a.text})
+    elif a.cmd == "cancel":
+        resp = call({"op": "cancel", "id": a.id})
+    else:
+        resp = call({"op": "status", "id": a.id} if a.id is not None else {"op": "status"})
+        if not resp.get("ok"):
+            sys.exit(f"labreq: {resp.get('error')}")
+        reqs = resp.get("requests", [])
+        if not reqs:
+            print("no requests")
+        for r in reqs:
+            show(r, verbose=a.id is not None)
+        return
+    if not resp.get("ok"):
+        sys.exit(f"labreq: {resp.get('error')}")
+    if a.cmd == "cancel":
+        print(f"request #{resp['id']} cancelled")
+    else:
+        print(f"request #{resp['id']} submitted — the admin has been notified. Check with: labreq status {resp['id']}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,6 @@
+# Example of the generated /etc/falco/rules.d/labops_00_students.yaml (written by `labctl sync`).
+- list: labops_student_uids
+  items: [1001, 1002, 1003, 1004, 1005]
+
+- list: labops_admin_uids
+  items: [1000]

@@ -1,0 +1,14 @@
+[Unit]
+Description=labops: sample GPU compute processes into /var/lib/labops/gpu.db
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/labops/bin/labops-gpu-collect
+Nice=10
+UMask=0027
+TimeoutStartSec=50
+ProtectSystem=strict
+ReadWritePaths=/var/lib/labops
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes

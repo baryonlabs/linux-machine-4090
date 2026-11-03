@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Weekly `lynis audit system --quick` → store report → Discord (hardening index + delta). Run as root.
+   --print  print instead of posting   --no-run  only re-parse the last stored report"""
+import argparse
+import glob
+import os
+import shutil
+import socket
+import sys
+import time
+
+for _p in ("/opt/labops/lib", os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib")):
+    if os.path.isdir(_p):
+        sys.path.insert(0, _p)
+import labops_common as C  # noqa: E402
+
+KEEP = 26  # ~6 months of weekly reports
+
+
+def parse(path):
+    d = {"hardening_index": None, "warning": [], "suggestion": [], "tests_executed": 0}
+    with open(path, errors="replace") as f:
+        for ln in f:
+            k, _, v = ln.rstrip("\n").partition("=")
+            if k == "hardening_index":
+                d["hardening_index"] = int(v) if v.isdigit() else None
+            elif k == "warning[]":
+                d["warning"].append(v)
+            elif k == "suggestion[]":
+                d["suggestion"].append(v)
+            elif k == "tests_executed":
+                d["tests_executed"] = len([t for t in v.split("|") if t])
+    return d
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--print", action="store_true")
+    ap.add_argument("--no-run", action="store_true")
+    a = ap.parse_args()
+    conf = C.load_conf()
+    outdir = os.path.join(conf["STATE_DIR"], "lynis")
+    os.makedirs(outdir, mode=0o750, exist_ok=True)
+    prev = sorted(glob.glob(os.path.join(outdir, "report-*.dat")))
+    if not a.no_run:
+        stamp = time.strftime("%Y%m%d-%H%M")
+        rep, logf = os.path.join(outdir, f"report-{stamp}.dat"), os.path.join(outdir, f"lynis-{stamp}.log")
+        r = C.run(["lynis", "audit", "system", "--quick", "--no-colors", "--cronjob",
+                   "--report-file", rep, "--logfile", logf], timeout=3600)
+        if not os.path.exists(rep):
+            msg = f"labops weekly lynis FAILED on {socket.gethostname()} (rc={r.returncode})"
+            print(msg)
+            if not a.print:
+                C.discord_post(msg, conf)
+            sys.exit(1)
+        for old in sorted(glob.glob(os.path.join(outdir, "report-*.dat")))[:-KEEP]:
+            os.unlink(old)
+            lg = old.replace("report-", "lynis-").replace(".dat", ".log")
+            if os.path.exists(lg):
+                os.unlink(lg)
+        shutil.copy2(rep, os.path.join(outdir, "latest.dat"))
+    else:
+        if not prev:
+            sys.exit("no stored report")
+        rep, prev = prev[-1], prev[:-1]
+    cur = parse(rep)
+    old = parse(prev[-1]) if prev else None
+    hi = cur["hardening_index"]
+    delta = ""
+    if old and old["hardening_index"] is not None and hi is not None:
+        dv = hi - old["hardening_index"]
+        delta = f" ({'+' if dv >= 0 else ''}{dv} vs last week)"
+    new_w = [w for w in cur["warning"] if not old or w not in old["warning"]]
+    lines = [f"__**labops weekly lynis — {socket.gethostname()}**__",
+             f"Hardening index: **{hi}**{delta}  | tests: {cur['tests_executed']} | warnings: {len(cur['warning'])} | "
+             f"suggestions: {len(cur['suggestion'])}"]
+    if cur["warning"]:
+        lines.append("Warnings:")
+        lines += [f"  {'NEW ' if w in new_w else ''}{w.split('|')[0]}: {w.split('|')[1] if '|' in w else ''}"
+                  for w in cur["warning"][:10]]
+    if old:
+        fixed = [s.split("|")[0] for s in old["suggestion"] if s not in cur["suggestion"]]
+        if fixed:
+            lines.append("Resolved since last week: " + ", ".join(fixed[:15]))
+    lines.append(f"Report: {rep}")
+    text = "\n".join(lines)
+    if a.print:
+        print(text)
+    else:
+        sys.exit(0 if C.discord_post(text, conf) else 1)
+
+
+if __name__ == "__main__":
+    main()

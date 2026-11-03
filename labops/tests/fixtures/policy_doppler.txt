@@ -1,0 +1,193 @@
+doppler:
+  Installed: 3.76.0
+  Candidate: 3.77.1
+  Version table:
+     3.77.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.77.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.76.6 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.76.5 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.76.4 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.76.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+ *** 3.76.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+        100 /var/lib/dpkg/status
+     3.75.3 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.75.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.75.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.75.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.74.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.73.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.73.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.73.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.72.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.72.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.71.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.71.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.70.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.69.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.69.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.69.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.68.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.67.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.67.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.66.5 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.66.4 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.66.3 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.66.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.65.3 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.65.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.65.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.65.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.64.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.63.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.63.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.62.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.61.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.60.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.60.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.59.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.58.4 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.58.3 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.58.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.57.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.57.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.56.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.56.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.55.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.54.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.53.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.53.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.52.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.52.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.47.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.46.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.45.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.44.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.42.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.41.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.40.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.40.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.39.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.39.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.38.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.37.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.36.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.36.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.35.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.34.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.34.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.33.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.33.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.33.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.32.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.31.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.31.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.30.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.30.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.29.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.28.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.27.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.27.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.26.4 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.26.3 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.26.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.26.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.26.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.25.0 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.24.4 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.24.3 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.24.2 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages
+     3.24.1 500
+        500 https://packages.doppler.com/public/cli/deb/debian any-version/main amd64 Packages

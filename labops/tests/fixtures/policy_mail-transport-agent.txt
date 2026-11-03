@@ -1,0 +1,4 @@
+mail-transport-agent:
+  Installed: (none)
+  Candidate: (none)
+  Version table:

@@ -1,0 +1,11 @@
+[Unit]
+Description=labops: daily summary to Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/labops/bin/labops-daily
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=3600
