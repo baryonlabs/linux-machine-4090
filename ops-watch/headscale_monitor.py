@@ -315,12 +315,22 @@ def get_headscale_nodes() -> List[Dict[str, Any]]:
         return []
 
 
+def _acl_students() -> List[str]:
+    try:
+        import json as _json
+        import labops_config
+        data = _json.loads(labops_config.acl_path().read_text(encoding="utf-8"))
+        return [u.rstrip("@") for u in data.get("groups", {}).get("group:students", [])]
+    except Exception:
+        return []
+
+
 def get_acl_policies() -> Dict[str, Any]:
     """Return structured Headscale ACL policies."""
     return {
         "groups": {
             "group:admin": ["martin@"],
-            "group:students": ["student1@", "student2@", "student3@"]
+            "group:students": [f"{u}@" for u in _acl_students()]
         },
         "rules": [
             {
@@ -333,7 +343,7 @@ def get_acl_policies() -> Dict[str, Any]:
             },
             {
                 "group": "🔒 학생 연구원 (group:students)",
-                "users": "student1, student2, student3",
+                "users": ", ".join(_acl_students()),
                 "dst": "gpu4090:2322 (SSH) • gpu4090:8889-8895 (학생 전용 JupyterLab, 관리자 :8888 차단)",
                 "visibility": "오직 본인 기기 + GPU 서버(100.64.0.2) 딱 2대만 노출",
                 "isolation": "관리자 포트(:8888) 및 관리자 PC/Mac mini/타 학생 기기 100% 완전 차단/비가시",

@@ -30,8 +30,29 @@ RULES = (
 REISSUE_SCRIPT = pathlib.Path(__file__).parent.parent / "headscale" / "reissue-student-key.sh"
 ACTION_ALLOWLIST = {
     "collect-evidence": ["journalctl", "-u", "falco-modern-bpf", "-u", "auditd", "--since", "-1h", "--no-pager"],
-    "reissue-headscale-student1": ["bash", str(REISSUE_SCRIPT), "student1", "--execute"]
 }
+
+
+def resolve_action(action: str):
+    """Return the argv for an allowlisted action, or None.
+
+    `reissue-headscale-<user>` is accepted for any user present in the
+    operational users.yaml (which lives outside this repository), so no
+    account name is hard-coded here.
+    """
+    if action in ACTION_ALLOWLIST:
+        return list(ACTION_ALLOWLIST[action])
+    import re as _re
+    m = _re.fullmatch(r"reissue-headscale-([A-Za-z0-9_-]+)", action)
+    if m:
+        user = m.group(1)
+        try:
+            import labops_config
+            if user in labops_config.user_names():
+                return ["bash", str(REISSUE_SCRIPT), user, "--execute"]
+        except Exception:
+            pass
+    return None
 AGY = os.environ.get("OPS_WATCH_ANTIGRAVITY", os.path.expanduser("~/.local/bin/agy"))
 
 
@@ -212,7 +233,7 @@ def approve(ticket: int) -> None:
         raise SystemExit("unknown ticket")
     if row[1] != "pending":
         raise SystemExit(f"ticket is already {row[1]}")
-    argv = ACTION_ALLOWLIST.get(row[0])
+    argv = resolve_action(row[0])
     if not argv:
         raise SystemExit("action is not allowlisted")
 

@@ -33,8 +33,9 @@ from typing import Any, Dict, List, Optional
 ROOT_DIR = pathlib.Path(__file__).parent
 DB_PATH = ROOT_DIR / "state" / "ops-watch.db"
 BASE_DIR = ROOT_DIR.parent
-USERS_YAML_PATH = BASE_DIR / "labops" / "users.yaml"
-ACL_FILE_LOCAL = BASE_DIR / "headscale" / "acl.hujson"
+import labops_config
+USERS_YAML_PATH = labops_config.users_yaml_path()
+ACL_FILE_LOCAL = labops_config.acl_path()
 REMOTE_ACL_PATH = "/home/martin/headscale/config/acl.hujson"
 ADMIN_USER = "martin"
 
@@ -245,7 +246,7 @@ def emergency_global_lockdown(reason: str = "침해사고 의심에 따른 전�
         pass
 
     # 3. Kill all student sessions
-    student_users = ["student1", "student2", "student3", "student5", "student6", "student4"]
+    student_users = [n for n in labops_config.user_names(role="student")]
     for su in student_users:
         run_ssh_or_local(["bash", "-c", f"pkill -KILL -u {su} 2>/dev/null || true"])
     actions_taken.append(f"모든 학생 계정({len(student_users)}명)의 백그라운드 프로세스 및 SSH 세션 전면 강제 종료")
@@ -277,7 +278,7 @@ def emergency_global_lockdown(reason: str = "침해사고 의심에 따른 전�
 def restore_global_lockdown() -> Dict[str, Any]:
     """Restore normal operations after global lockdown."""
     # Restore students to Headscale ACL
-    active_students = ["student1", "student2", "student3"]
+    active_students = [n for n in labops_config.user_names(role="student")]
     update_headscale_students(active_students)
 
     # Clear lockdown state in db
@@ -292,7 +293,7 @@ def restore_global_lockdown() -> Dict[str, Any]:
         except Exception:
             pass
 
-    msg = "🟢 [비상 락다운 해제] 서버 정상 복구 완료. 활성 학생 계정(student1, student2, student3)의 VPN 통신이 재개되었습니다."
+    msg = "🟢 [비상 락다운 해제] 서버 정상 복구 완료. 활성 학생 계정의 VPN 통신이 재개되었습니다."
     log_emergency_event("emergency-global-restore", msg, tags="lockdown-restore,normal")
 
     return {

@@ -1246,10 +1246,7 @@ for step, batch in enumerate(train_loader):
         <div class="form-group">
           <label class="form-label">대상 사용자 (Headscale User / Namespace)</label>
           <select id="nvk-user" class="form-input" required>
-            <option value="martin">martin (관리자)</option>
-            <option value="student1">student1 (학생 연구원)</option>
-            <option value="student2">student2 (학생 연구원)</option>
-            <option value="student3">student3 (학생 연구원)</option>
+            <option value="">사용자 불러오는 중…</option>
           </select>
         </div>
         <div class="form-row">
@@ -2689,8 +2686,19 @@ for step, batch in enumerate(train_loader):
       }
     }
 
+    async function loadVpnUserOptions() {
+      const users = await fetchAPI('/api/metrics/users');
+      const sel = document.getElementById('nvk-user');
+      if (!users || !sel) return;
+      sel.innerHTML = users
+        .filter(u => u.state !== 'removed' && u.state !== 'locked')
+        .map(u => `<option value="${u.name}">${u.name} (${u.role})</option>`)
+        .join('');
+    }
+
     // Initialize
     loadStatus();
+    loadVpnUserOptions();
     loadTickets();
     loadThermals();
     setInterval(loadTickets, 10000);

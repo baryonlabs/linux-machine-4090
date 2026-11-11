@@ -216,7 +216,8 @@ def check_and_update_endpoints() -> List[Dict[str, Any]]:
 
                 # Create security ticket in ops-watch tickets table
                 fp = hashlib.sha256(f"endpoint_change_{username}_{machine_name}_{now}".encode()).hexdigest()
-                action_prop = f"reissue-headscale-{username}" if username == "student1" else "collect-evidence"
+                reissue_users = {u.strip() for u in os.environ.get("OPS_WATCH_REISSUE_USERS", "").split(",") if u.strip()}
+                action_prop = f"reissue-headscale-{username}" if username in reissue_users else "collect-evidence"
                 c.execute(
                     "INSERT INTO tickets(created, category, evidence, action, fingerprint, status) VALUES(?,?,?,?,?, 'pending')",
                     (now, "endpoint", alert_text, action_prop, fp)

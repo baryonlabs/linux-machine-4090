@@ -20,7 +20,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 BASE_DIR = pathlib.Path(__file__).parent.parent
-USERS_YAML_PATH = BASE_DIR / "labops" / "users.yaml"
+import labops_config
+USERS_YAML_PATH = labops_config.users_yaml_path()
 DB_PATH = pathlib.Path(__file__).parent / "state" / "ops-watch.db"
 
 
