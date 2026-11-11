@@ -1,176 +1,217 @@
-# Baryon GPU Lab — 4090 서버 운영 · 보안 · 관제 스택
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Baryon GPU Lab — operations, security and observability for a single-GPU research workstation" width="100%">
+</p>
 
-> **한 대의 RTX 4090 워크스테이션을 여러 연구원이 안전하게 나눠 쓰기 위한, 실제 운영 중인 구성 그대로의 코드.**
-> Headscale 사설망 · 계정 수명주기 · egress 방화벽 · 감사/런타임 탐지 · 셀프호스팅 관제 콘솔 · LLM 기반 티켓 트리아지를 하나의 저장소에 담았습니다.
+<p align="center">
+  <b>한 대의 RTX 4090을 여러 연구원이 안전하게 나눠 쓰기 위한 운영 · 보안 · 관제 스택</b><br>
+  <sub>Private tailnet · per-user isolation · audit/Falco detection · self-hosted console · schema-constrained LLM triage · Discord alerting</sub>
+</p>
 
-<sub>English abstract: An end-to-end operations stack for a single-GPU research workstation — private tailnet (Headscale), per-user isolation and lifecycle, egress firewalling, auditd/Falco detection, a self-hosted observability console, and schema-constrained LLM triage with provider fallback (agy → opencode → openrouter).</sub>
+<p align="center">
+  <img alt="status" src="https://img.shields.io/badge/status-operational-2ea043?style=for-the-badge">
+  <img alt="gpu" src="https://img.shields.io/badge/GPU-RTX%204090%2024GB-76b900?style=for-the-badge&logo=nvidia&logoColor=white">
+  <img alt="os" src="https://img.shields.io/badge/OS-Ubuntu%2026.04-E95420?style=for-the-badge&logo=ubuntu&logoColor=white">
+  <img alt="console" src="https://img.shields.io/badge/console-macOS%20app-000000?style=for-the-badge&logo=apple&logoColor=white">
+  <img alt="triage" src="https://img.shields.io/badge/triage-agy%20%E2%86%92%20opencode%20%E2%86%92%20openrouter-8b5cf6?style=for-the-badge">
+  <img alt="license" src="https://img.shields.io/badge/license-TBD-lightgrey?style=for-the-badge">
+</p>
 
----
-
-## 1. 이 저장소는 무엇인가
-
-연구실 규모(사용자 3~10명, GPU 1~2대)에서 흔히 생기는 문제는 **성능이 아니라 운영**입니다.
-누가 어떤 계정으로 들어오는지, GPU를 누가 얼마나 쓰는지, 실수로 LAN이나 다른 사용자 홈에 접근하지 않는지, 사고가 났을 때 근거가 남는지.
-
-이 저장소는 그 문제들을 **한 대의 서버에서 실제로 돌아가는 형태로** 해결한 결과물입니다.
-
-| 구성 | 내용 |
-|---|---|
-| `headscale/` | 사설 Tailnet(WireGuard) 제어 서버 연동, ACL, 학생 키 재발급 절차 |
-| `labops/` | 사용자 레지스트리, 계정 수명주기(`labctl`), auditd 규칙, Falco 룰, 특권 요청 큐 |
-| `ops-watch/` | 관제 대시보드(23450), GPU/NVMe/스토리지/프로세스 메트릭, 티켓 워크플로, LLM 트리아지, SSH 워치독 |
-| `scripts/` | `setup/` 사용자·환경 구성, `hardening/` 서버 하드닝 및 CVE 임시 완화 |
-| `docs/` | 아키텍처, 보안 감사 보고서, 실제 사고 기록 |
-| `examples/` | GPU 추론/LoRA 예제, Jupyter MCP 클라이언트 |
-
----
-
-## 2. 왜 오픈소스로 공개하는가 (의의)
-
-### 2.1 "작은 연구실"을 위한 완결된 보안 운영 레퍼런스가 없다
-대기업용 Kubernetes/SSO/EDR 스택은 넘치지만, **GPU 한 대 + 사용자 다섯 명** 규모에 맞는 현실적인 구성은 문서화되어 있지 않습니다.
-이 저장소는 ACL · 계정 만료 · egress 차단 · 감사 로그 · 알림 · 온보딩 자동화를 **하나의 재현 가능한 세트**로 제공합니다. 다른 연구실은 fork 해서 사용자 목록과 IP만 바꾸면 됩니다.
-
-### 2.2 실패와 오판을 함께 공개한다
-운영 도구는 "잘 될 때"보다 **"잘못 판단할 때"** 가 위험합니다. 이 저장소에는 실제 사고가 기록되어 있습니다.
-
-- `tailscale ping`은 정상인데 SSH만 죽는 장애 → **ping은 tailscaled가 응답하는 것이고 데이터 평면과 다르다**는 사실을 모르면 몇 시간을 잃습니다.
-- 두 번째 tailscaled 컨테이너가 같은 iptables 체인(`ts-input`)을 flush해 전 사용자 SSH가 17시간 중단된 사고 → `docs/incidents/2026-11-11-dureclaw-mesh.md`
-- 그 결과 `ops-watch`에 **TCP 2322 + SSH 배너** 기반 워치독을 추가했습니다. (`ops-watch/health_check.py`)
-
-같은 함정을 다른 팀이 반복하지 않도록, 탐지 공백과 그 보완 과정을 그대로 남깁니다.
-
-### 2.3 LLM 운영 자동화의 "현실적인" 패턴
-LLM을 관제에 붙일 때 필요한 것은 멋진 프롬프트가 아니라 **스키마 강제 · 폴백 · 감사 기록**입니다.
-
-- 온톨로지(`ontology.json`) 기반 판정 + JSON Schema 강제 출력
-- 제공자 폴백 체인: **`agy` → `opencode` → `openrouter`** (하나가 빈 응답/거부/타임아웃이면 다음으로)
-- 어떤 제공자·모델이 판단했는지 worklog에 `llm:<provider>` 태그로 기록
-- 추측(호스트명 기반 OS 판별)을 실제 데이터(Headscale `host_info`)로 교체한 과정
-
-"LLM이 알아서 다 한다"가 아니라, **틀릴 수 있음을 전제로 설계하는 방법**을 공유합니다.
-
-### 2.4 개인정보·시크릿을 코드와 분리하는 템플릿
-사용자 이메일, SSH 공개키, Discord 웹훅, 초대 메일 본문은 **코드와 같은 저장소에 두면 안 됩니다.**
-이 저장소는 `secrets/`, `private/`, `state/`를 기본적으로 배제하고, 공개 전 점검용 체크리스트(§7)를 제공합니다.
-
-### 2.5 단일 GPU에서 멀티유저 인프라로 가는 최소 경로
-GPU 1대 → 사용자별 격리 → 원격 접속 → 사용량 관제 → 사고 대응까지, **과하지 않은 최소 구성**으로 단계별 확장이 가능하도록 정리했습니다.
+<p align="center">
+  <a href="#-quick-start"><b>Quick Start</b></a> ·
+  <a href="#-architecture"><b>Architecture</b></a> ·
+  <a href="#-whats-inside"><b>Components</b></a> ·
+  <a href="#-security-model"><b>Security</b></a> ·
+  <a href="#-observability--alerting"><b>Observability</b></a> ·
+  <a href="#-operations-runbook"><b>Runbook</b></a> ·
+  <a href="docs/ARCHITECTURE.md"><b>Docs</b></a>
+</p>
 
 ---
 
-## 3. 아키텍처
-
-![Baryon Lab 4090 서버 아키텍처](docs/architecture.png)
-
-> 원본(HTML, 확대 가능): [`docs/architecture.html`](docs/architecture.html)
-> — **서버 설치 항목**(호스트 서비스·Docker·스토리지), **맥용 관리자 앱**(Ops-Watch), **Discord 알림 경로**까지 한 장에 정리했습니다.
-> 사용자 IP·호스트명·계정명은 **비식별화된 예시값**입니다.
-
-- **접속**: Tailnet 전용, SSH는 비표준 `2322`, 키 인증만 허용
-- **격리**: 학생 계정은 `gpu4090:2322`만 허용(ACL), egress 방화벽으로 LAN·타 노드·관리 포트 차단
-- **관제**: 5분 주기 저널 스캔 + 60초 SSH 도달성 워치독 + GPU/온도/스토리지
-- **트리아지**: 온톨로지 기반 LLM 분석(스키마 강제) + 제공자 폴백
-
-상세 다이어그램: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+> **English** — An end-to-end operations stack for a single-GPU research workstation: a private Headscale/Tailscale mesh, per-user account lifecycle and isolation, egress firewalling, auditd/Falco detection, a self-hosted observability console, and schema-constrained LLM triage with provider fallback. Built and operated in production, published as a reproducible reference for small labs.
 
 ---
 
-## 4. 빠른 시작
+## ✨ Why this exists
 
-### 요구사항
-- Ubuntu 24.04 (단일 GPU 서버), Docker, Python 3.11+
-- Headscale(또는 Tailscale) 제어 서버
-- 관제 대시보드를 띄울 관리자 머신(서버와 SSH 연결)
+Small labs don't fail because the GPU is slow — they fail because of **operations**. Who connected from which device? Who is using the GPU? Can a student reach the NAS? What evidence exists after an incident?
 
-### 1) 서버 하드닝
+Most open-source stacks assume Kubernetes, SSO and an EDR team. A lab with **one GPU and five people** needs something smaller and stricter. This repository is that stack, running in production.
+
+- **A complete, reproducible security baseline** — ACL, account expiry, egress blocking, audit logging, alerting and onboarding in one set.
+- **Failure modes are documented, not hidden** — including a 17-hour SSH outage caused by an overlay container flushing the host's iptables chains. See [`docs/incidents/`](docs/incidents/).
+- **LLM automation you can audit** — schema-enforced output, provider fallback, and a record of *which model* made each judgment.
+- **Privacy-safe by default** — emails, keys and personal data live outside the code tree (`secrets/`, `private/`), with a pre-publication checklist.
+
+## 🧭 What's inside
+
+| Area | What it does | Path |
+|---|---|---|
+| 🛰 **Private mesh** | Headscale control plane, Tailscale ACL, student key re-issue | [`headscale/`](headscale/) |
+| 👥 **Account lifecycle** | User registry, `labctl sync`, expiry, sudo policy, privileged request queue | [`labops/`](labops/) |
+| 📊 **Ops-Watch console** | macOS app · GPU/NVMe/storage metrics · tickets · VPN · containers | [`ops-watch/`](ops-watch/) |
+| 🩺 **Reachability watchdog** | TCP 2322 + SSH banner (not `tailscale ping`) with state-transition alerts | [`ops-watch/health_check.py`](ops-watch/health_check.py) |
+| 🧠 **LLM triage chain** | `agy → opencode → openrouter`, JSON-schema enforced, provider recorded | [`ops-watch/analysis_llm.py`](ops-watch/analysis_llm.py) |
+| 🛡 **Hardening** | ufw + `student-egress`, sshd baseline, kernel CVE mitigation | [`scripts/hardening/`](scripts/hardening/) |
+| 🧪 **GPU examples** | 4-bit inference, LoRA, video pipelines, Jupyter MCP client | [`examples/`](examples/) |
+| 📚 **Docs** | Architecture, security audit, incident postmortems | [`docs/`](docs/) |
+
+## 🚀 Quick start
+
 ```bash
-sudo bash scripts/hardening/harden.sh          # 즉시 적용
-sudo bash scripts/hardening/harden.sh --reboot # 커널 업그레이드 + 재부팅 포함
-sudo bash scripts/hardening/mitigate-cve-2026-98432.sh  # 커널 패치 전 임시 완화
+git clone https://github.com/baryonlabs/linux-machine-4090.git
+cd linux-machine-4090
 ```
 
-### 2) 사설망 (Headscale)
+**1 · Harden the server** (Ubuntu 24.04/26.04, run on the GPU host)
+
+```bash
+sudo bash scripts/hardening/harden.sh
+sudo bash scripts/hardening/mitigate-cve-2026-98432.sh   # until the kernel fix is installed
+```
+
+**2 · Bring up the private mesh**
+
 ```bash
 bash headscale/onboard-student.sh <username>
-bash headscale/reissue-student-key.sh <username>            # 미리보기
-bash headscale/reissue-student-key.sh <username> --execute  # 노드 만료 + 새 키 발급
+bash headscale/reissue-student-key.sh <username> --execute
 ```
-ACL: [`headscale/acl.hujson`](headscale/acl.hujson)
 
-### 3) 사용자 수명주기
+**3 · Provision users and isolation**
+
 ```bash
 sudo bash labops/install.sh
-sudo labctl sync            # users.yaml → 시스템 계정/Headscale 반영
-sudo labctl status <user>
+sudo labctl sync
+sudo labctl status <username>
 ```
 
-### 4) 관제 콘솔
+**4 · Run the console**
+
 ```bash
 cd ops-watch
 OPS_WATCH_PORT=23450 python3 dashboard.py
-# http://localhost:23450
+# → http://localhost:23450  (macOS app bundle: /Applications/Ops-Watch.app)
 ```
 
-주요 환경변수:
+Verify the important part — the data plane:
 
-| 변수 | 기본값 | 설명 |
-|---|---|---|
-| `OPS_WATCH_PORT` | `23450` | 대시보드 포트 |
-| `OPS_WATCH_SCAN_INTERVAL` | `300` | 저널 자동 스캔 주기(초) |
-| `OPS_WATCH_SSH_HOST` / `_PORT` | `100.64.0.2` / `2322` | SSH 워치독 대상 |
-| `OPS_WATCH_LLM_CHAIN` | `agy,opencode,openrouter` | LLM 폴백 순서 |
-| `OPS_WATCH_MODEL` | `gemini-3.8-flash-medium` | `agy` 모델 |
-| `OPS_WATCH_OPENCODE_MODEL` | `opencode-go/deepseek-v4.1-flash` | `opencode` 모델 |
-| `OPS_WATCH_OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash` | OpenRouter 모델 |
-| `OPENROUTER_API_KEY` | – | OpenRouter 키(없으면 `~/.config/baryon/env` 등에서 탐색) |
+```console
+$ python3 ops-watch/health_check.py
+SSH health: OK  (ok=True)
+  checked : 2026-11-12 00:12:41
+  since   : 2026-11-11 22:47:19
+  last ok : 2026-11-12 00:12:41
+  tailnet 100.64.0.2:2322: OPEN 14.8ms SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.20
+  tailscaled peer: online=True active=True os=linux
+```
 
----
+## 🏗 Architecture
 
-## 5. 보안 모델
+![Architecture](docs/architecture.png)
 
-| 계층 | 통제 |
+<p align="center">
+  <sub>원본 HTML: <a href="docs/architecture.html">docs/architecture.html</a> · 사용자 IP·호스트명·계정명은 비식별화된 예시값입니다.</sub>
+</p>
+
+- **Access** — tailnet only, non-standard SSH `:2322`, public-key auth
+- **Isolation** — students may reach `gpu4090:2322` and `:8889-8895` only; LAN, other nodes and admin services are blocked
+- **Observability** — 5-minute journal scan, 60-second SSH reachability, GPU/NVMe/storage telemetry
+- **Triage** — ontology-driven LLM analysis with a three-provider fallback chain
+
+Full diagram and component notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+
+## 🔐 Security model
+
+| Layer | Control |
 |---|---|
-| 네트워크 | Tailnet ACL(관리자 전체 / 학생 `gpu4090:2322`), `ufw default deny`, `student-egress`(LAN·docker망·관리 포트 차단) |
-| 계정 | 키 전용 SSH, 비표준 포트, `AllowUsers`, 계정 만료(`chage -E`), sudo 최소화 |
-| 런타임 | auditd 규칙(`labops/audit`), Falco 룰(`labops/falco`), 커널 CVE 임시 완화(nftables) |
-| 관제 | 저널 스캔 → 티켓, 단말/OS 변경 추적, 프로세스 이상 탐지, SSH 도달성(TCP+배너) |
-| 비밀 | `secrets/`·`private/`·`state/` 저장소 배제, 웹훅/키 파일 분리 |
+| Network | Headscale ACL (admin `*:*`, students `gpu4090:2322` + `:8889-8895`), `ufw default deny`, `student-egress` blocks LAN / docker networks / admin ports |
+| Accounts | key-only SSH, `AllowUsers`, account expiry (`chage -E`), minimal sudo, privileged requests via `labops` catalog |
+| Runtime | auditd rules, Falco + falcosidekick, nftables CVE-2026-98432 mitigation |
+| Detection | journal scan → tickets, endpoint/OS change tracking, process anomalies, SSH reachability |
+| Secrets | `secrets/`, `private/`, `state/` excluded from the tree; webhook and keys kept out of Git |
 
-> ⚠️ 이 저장소의 기본 설정은 **단일 관리자·신뢰된 연구실**을 전제로 합니다. 인터넷에 직접 노출하는 용도가 아니며, 공개 배포 시 ACL·계정 목록·IP를 반드시 자신의 환경에 맞게 바꾸세요.
+> ⚠️ The defaults assume **a single admin and a trusted lab**. Do not expose this to the public internet; replace users, IPs and ACL groups before deploying elsewhere.
+
+## 🩺 Observability & alerting
+
+**Ops-Watch** is a self-hosted console (macOS app + local web server) that collects metrics over SSH and keeps a ticket trail.
+
+| Loop | Interval | What it does |
+|---|---|---|
+| Journal scan | 300 s | `journalctl -p warning..alert` → rule matching → tickets + worklog |
+| SSH watchdog | 60 s | TCP `:2322` + SSH banner; alerts on `OK → FIREWALL_BLOCKED → OK` transitions |
+| Endpoint tracker | per scan | real device info from Headscale `host_info` (OS version, distro, arch, model, client) |
+| GPU notifier | 10 min | utilization/VRAM changes → Discord |
+| LabOps audit alert | 5 min | high-signal auditd events → Discord |
+
+```console
+[auto-scan] 23:10:12 0 new ticket(s) (3.9s)
+SSH 2322: 차단(방화벽)   ← what a real outage looks like in the header badge
+```
+
+## 🧠 LLM triage
+
+Ticket analysis is **schema-constrained** and **provider-fallbacked**:
+
+```console
+$ python3 ops-watch/analysis_llm.py --self-test
+OK   agy        gemini-3.8-flash-medium           19299ms  {'ok': True}
+OK   opencode   opencode-go/deepseek-v4.1-flash    6300ms  {'ok': True}
+OK   openrouter deepseek/deepseek-v4.1-flash       2404ms  {'ok': True}
+```
+
+- `agy` (Antigravity CLI, OAuth) → `opencode` → `openrouter` (HTTP, JSON mode)
+- Each provider must return JSON matching the request schema; otherwise the next runs
+- The winning provider/model is stored in the worklog (`llm:agy`, `llm:opencode,fallback`) and shown in the UI
+- Timeouts kill the whole process group; hangs never block the chain
+
+Configuration: `OPS_WATCH_LLM_CHAIN`, `OPS_WATCH_MODEL`, `OPS_WATCH_OPENCODE_MODEL`, `OPS_WATCH_OPENROUTER_MODEL`, `OPS_WATCH_LLM_TIMEOUT`.
+
+## 🛠 Operations runbook
+
+| Scenario | Command |
+|---|---|
+| New researcher | `sudo labctl sync` → issue pre-auth key → per-user Jupyter container |
+| Suspected device / key leak | `headscale/reissue-student-key.sh <user> --execute` (expire node + new key) |
+| Incident triage | Ops-Watch ticket → AI analysis → approve allowlisted action → worklog |
+| SSH unreachable | verify `TCP 2322`, `iptables -S ts-input`, `ip addr show tailscale0` — **not** `tailscale ping` alone |
+| Post-incident | record in [`docs/incidents/`](docs/incidents/) |
+
+## 📓 Case study
+
+**2026-11-11 — 17-hour SSH outage.** A DureClaw mesh E2E job ran on the production runner. Its second `tailscaled` instance shared the host's iptables chain names, flushed `ts-input`, and took `100.64.0.1` — the admin's tailnet address. `tailscale ping` stayed green the whole time because tailscaled answers it itself; only TCP died. The fix (stop the container), the root cause, and the monitoring gap that allowed it are documented in [`docs/incidents/2026-11-11-dureclaw-mesh.md`](docs/incidents/2026-11-11-dureclaw-mesh.md).
+
+That incident produced `health_check.py` — which is why this repo checks the **data plane**, not the daemon.
+
+## 🗺 Roadmap
+
+- [x] Headscale ACL + account lifecycle
+- [x] Hardening + kernel CVE mitigation
+- [x] Ops-Watch console (metrics · tickets · VPN · containers)
+- [x] TCP/SSH reachability watchdog
+- [x] LLM triage with provider fallback
+- [x] Real device inventory from Headscale `host_info`
+- [ ] Ticket **reject/close** workflow (currently approve-only)
+- [ ] Anonymized `users.yaml` template for forks
+- [ ] Prometheus / Grafana export
+- [ ] Multi-GPU scheduling
+
+## 🤝 Contributing
+
+Issues and PRs are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and keep personal data out of commits. Security reports: see [`SECURITY.md`](SECURITY.md) (do not open a public issue).
+
+## 📄 License
+
+**TBD** — to be chosen before public release (Apache-2.0 or MIT recommended).
+
+> **Maintainers:** before making this repository public, complete [`docs/open-source-checklist.md`](docs/open-source-checklist.md) (secrets, personal data, license, CI).
+
+## 🙏 Acknowledgements
+
+Built on the shoulders of [Headscale](https://github.com/juanfont/headscale), [Tailscale](https://tailscale.com), [Falco](https://falco.org), [auditd](https://github.com/linux-audit/audit-userspace) and [Docker](https://www.docker.com). Incident tooling inspired by real production pain.
 
 ---
 
-## 6. 운영 런북
-
-- **신규 연구원 온보딩**: `labctl sync` → Headscale pre-auth key 발급 → 개인 JupyterLab 컨테이너 → 접속 안내
-- **VPN 키 재발급(의심 단말)**: `headscale/reissue-student-key.sh <user> --execute`
-- **사고 대응**: ops-watch 티켓 → LLM 분석(또는 수동) → 승인 시 allowlist 액션 실행 → worklog 기록
-- **장애 복구**: `docs/incidents/` 참고. SSH 불통 시 *데이터 평면* 확인(TCP 2322), `iptables -S ts-input`, `ip addr show tailscale0`
-
----
-
-## 7. 공개(Open Source) 전 체크리스트
-
-이 저장소는 현재 **프라이빗**입니다. 공개 전에 아래를 반드시 처리하세요.
-
-- [ ] `secrets/`, `private/`, `emails/`, `state/`, `*.log` 미포함 확인
-- [ ] `labops/users.yaml`의 실제 이메일·SSH 공개키 → 예시 값으로 교체
-- [ ] `scripts/hardening/harden.sh`의 ngrok URL·호스트명 등 환경 상수 일반화
-- [ ] `headscale/acl.hujson`의 사용자/그룹 이름 일반화
-- [ ] git 히스토리 시크릿 스캔 (`gitleaks detect --no-git=false`)
-- [ ] 라이선스 결정 및 `LICENSE` 추가
-- [ ] `SECURITY.md`(취약점 신고 절차) 추가
-- [ ] 저장소 이름/설명/토픽 정리
-
-## 8. 라이선스
-
-**TBD** — 공개 시점에 결정합니다. (권장: Apache-2.0 또는 MIT)
-
-## 9. 기여 / 문의
-
-이슈와 PR을 환영합니다. 보안 관련 제보는 공개 이슈 대신 저장소 관리자에게 비공개로 연락해 주세요.
-
----
-
-<sub>Built and operated by Baryon Labs. 이 문서의 구성·수치는 실제 운영 서버(`martin-B650M-K`, RTX 4090 24GB)를 기준으로 작성되었습니다.</sub>
+<p align="center">
+  <sub>Built and operated by <b>Baryon Labs</b> · martin-B650M-K · RTX 4090 24GB · Ubuntu 26.04 · updated 2026-11-12</sub>
+</p>
