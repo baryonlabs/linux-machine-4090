@@ -1,0 +1,8 @@
+[Unit]
+Description=ops-watch read-only log scan
+
+[Service]
+Type=oneshot
+User=martin
+WorkingDirectory=/home/martin/ops-watch
+ExecStart=/usr/bin/python3 /home/martin/ops-watch/ops_watch.py scan

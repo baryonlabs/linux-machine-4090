@@ -27,6 +27,14 @@ KEYS = {
 }
 
 
+def trusted_admin_event(event, conf):
+    """Admin maintenance is retained in audit logs, but is not a real-time Discord incident."""
+    auid = event["syscall"].get("auid")
+    if auid in (None, "4294967295"):
+        return False
+    return C.uid_name(auid) == conf.get("ADMIN_USER")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--print", action="store_true")
@@ -39,6 +47,7 @@ def main():
         chk = os.path.join(chkdir, key)
         first = not os.path.exists(chk)
         evs, _ = AU.search(key, checkpoint=chk, start="recent" if first else None)
+        evs = [e for e in evs if not trusted_admin_event(e, conf)]
         if not evs:
             continue
         who = collections.Counter()

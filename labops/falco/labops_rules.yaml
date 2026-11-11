@@ -77,10 +77,11 @@
   tags: [labops, cryptomining]
 
 - rule: LabOps student creates raw or packet socket
-  desc: Raw (SOCK_RAW, with or without CLOEXEC/NONBLOCK) or AF_PACKET socket requested by a student (needs CAP_NET_RAW; normally fails).
+  desc: AF_PACKET or IP raw socket requested by a student (needs CAP_NET_RAW; normally fails). Netlink raw sockets are normal kernel IPC and excluded.
   condition: >
     evt.type=socket and labops_student and
-    (evt.arg.domain=AF_PACKET or evt.arg.type in (3, 2051, 524291, 526339))
+    (evt.arg.domain=AF_PACKET or
+     (evt.arg.domain in (AF_INET, AF_INET6) and evt.arg.type in (3, 2051, 524291, 526339)))
   output: >
     Raw/packet socket by %user.loginname (domain=%evt.arg.domain type=%evt.arg.type res=%evt.res cmd=%proc.cmdline)
   priority: WARNING
@@ -88,9 +89,9 @@
 
 # --------------------------------------------------------------------------------------------------- files
 - rule: LabOps student reads sensitive auth file
-  desc: Open-for-read of shadow/gshadow/sudoers by a student (success or failure).
+  desc: Open-for-read of shadow/gshadow/sudoers by a non-root student process (success or failure).
   condition: >
-    labops_open and evt.is_open_read=true and labops_student and
+    labops_open and evt.is_open_read=true and labops_student and user.uid != 0 and
     (fs.path.name in (/etc/shadow, /etc/shadow-, /etc/gshadow, /etc/gshadow-, /etc/sudoers, /etc/security/opasswd) or
      fs.path.name startswith /etc/sudoers.d/ or fs.path.name startswith /root/ or fs.path.name startswith /etc/ssh/ssh_host_)
   output: >
@@ -132,17 +133,22 @@
   priority: WARNING
   tags: [labops, privilege_escalation]
 
-- rule: LabOps student session process running as root
+- rule: LabOps root process executes student-controlled code
   desc: >
-    A process in a student's login session runs with uid 0 and is not a known setuid helper or the
-    PAM motd scripts executed at SSH login — likely successful privilege escalation (e.g. kernel exploit).
+    Root executed a file from a student-controlled or temporary location, opened an interactive root
+    shell, or executed code from memfd in a student's login session — likely successful privilege escalation.
   condition: >
     labops_spawned and labops_student_login and user.uid=0 and
-    not proc.name in (labops_known_suid) and not proc.aname in (labops_known_suid) and
-    not proc.name=run-parts and not proc.aname=run-parts
+    (proc.exepath startswith /home/ or proc.exepath startswith /mnt/data/users/ or
+     proc.exepath startswith /tmp/ or proc.exepath startswith /var/tmp/ or proc.exepath startswith /dev/shm/ or
+     proc.is_exe_from_memfd=true or
+     (proc.tty != 0 and proc.name in (sh, bash, dash, zsh, fish)) or
+     (proc.name in (sh, bash, dash, zsh, fish, python, python3, python3.12, perl, ruby, node) and
+      (proc.cmdline contains "/home/" or proc.cmdline contains "/mnt/data/users/" or
+       proc.cmdline contains "/tmp/" or proc.cmdline contains "/var/tmp/" or proc.cmdline contains "/dev/shm/")))
   output: >
-    ROOT process in student session of %user.loginname: %proc.cmdline (exe=%proc.exepath parent=%proc.pname
-    ancestors=%proc.aname[2]/%proc.aname[3])
+    Suspicious ROOT execution in student session of %user.loginname: %proc.cmdline (exe=%proc.exepath
+    parent=%proc.pname tty=%proc.tty ancestors=%proc.aname[2]/%proc.aname[3])
   priority: CRITICAL
   tags: [labops, privilege_escalation]
 

@@ -88,12 +88,12 @@ root 전용 항목(ufw 규칙, 각 사용자 authorized_keys, chage, crontab)은
 |---|---|---|
 | H1 registry | `127.0.0.1:5000`로 재바인딩(LAN 차단, 볼륨 유지) + 학생 egress 방화벽에서 5000 차단 | ✅ 바인딩 완료 / ⏳ 방화벽 |
 | H2 ngrok API | `ngrok.yml`에 `web_addr: false` + systemd 서비스화(재부팅 생존, `--url` 고정) | ✅ 설정 / ⏳ 재시작 |
-| H3 포워딩·피벗 | `students` 그룹 egress 방화벽(LAN·tailnet·docker망·관리 포트 차단) + sshd `Match Group students` | ⏳ harden.sh |
-| M1 student6 sudo | `gpasswd -d` | ⏳ harden.sh |
-| M2 NOPASSWD install/mv | `/usr/local/bin/ollama`만 남김 | ⏳ harden.sh |
-| M3 ollama | keep-alive 0 + ufw LAN 차단 + 학생 차단 | ⏳ harden.sh |
-| M4 업데이트·재부팅 | `harden.sh --reboot` (NVIDIA 라이브러리 불일치 방지 위해 재부팅과 묶음) | ⏳ 사용자 시점 |
-| L1 미사용 계정 | student5·student6·student4 잠금(`usermod -L -e 1`) | ⏳ harden.sh |
+| H3 포워딩·피벗 | `students` 그룹 egress 방화벽(LAN·tailnet·docker망·관리 포트 차단) + sshd `Match Group students` | ⏳ scripts/hardening/harden.sh |
+| M1 student6 sudo | `gpasswd -d` | ⏳ scripts/hardening/harden.sh |
+| M2 NOPASSWD install/mv | `/usr/local/bin/ollama`만 남김 | ⏳ scripts/hardening/harden.sh |
+| M3 ollama | keep-alive 0 + ufw LAN 차단 + 학생 차단 | ⏳ scripts/hardening/harden.sh |
+| M4 업데이트·재부팅 | `scripts/hardening/harden.sh --reboot` (NVIDIA 라이브러리 불일치 방지 위해 재부팅과 묶음) | ⏳ 사용자 시점 |
+| L1 미사용 계정 | student5·student6·student4 잠금(`usermod -L -e 1`) | ⏳ scripts/hardening/harden.sh |
 | L2 기타 | Headscale `9080/9091` → 127.0.0.1, `data/` 755, `/tmp/RustDesk` sticky, 학생 X11 off | ✅ 일부 / ⏳ |
 | 비밀정보 | HF 토큰·.env·secret.yaml 600 | ✅ (키 재발급은 사용자) |
 
@@ -103,12 +103,12 @@ root 전용 항목(ufw 규칙, 각 사용자 authorized_keys, chage, crontab)은
 
 - 영향: 실행 커널 6.8.0-136, 설치 커널 6.8.0-147 모두 취약. Ubuntu noble `linux` 수정판 6.8.0-149 미배포(`pro fix`: "A fix is coming soon").
 - 노출: 인터넷 포트 없음. LAN·tailnet 리스너, **비-root 로컬 사용자도 `setsockopt(IP_OPTIONS)`로 IP 옵션 SYN 전송 가능**(martin으로 확인, 완화 전 CONNECTED).
-- 완화(적용 ✅): `mitigate-cve-2026-98432.sh` — nft `table ip cve_2026_98432` prerouting/raw에서 `ip hdrlength != 5` TCP drop, systemd `cve-2026-98432.service`로 영속. 검증: loopback·tailnet IP·LAN IP·MacBook→tailnet 모두 IP-옵션 SYN BLOCKED, 일반 SYN OK.
+- 완화(적용 ✅): `scripts/hardening/mitigate-cve-2026-98432.sh` — nft `table ip cve_2026_98432` prerouting/raw에서 `ip hdrlength != 5` TCP drop, systemd `cve-2026-98432.service`로 영속. 검증: loopback·tailnet IP·LAN IP·MacBook→tailnet 모두 IP-옵션 SYN BLOCKED, 일반 SYN OK.
 - 후속: 6.8.0-149+ 설치·재부팅 후 `sudo systemctl disable --now cve-2026-98432 && sudo rm /etc/nftables.d/cve-2026-98432.nft`. Livepatch(`sudo pro attach`) 권장.
 
 ## 6. 최종 상태 재점검 (2026-11-04 01:25 KST, 조치 완료 후)
 
-점검 근거: `martin`(비-root) 직접 측정 + b300 외부 스캔. root 전용 항목(iptables·ufw 규칙, 계정 잠금, sudoers 내용)은 관리자가 실행한 `harden.sh` / `fix-control-plane.sh`(journal `fixcp`) / `mitigate-cve-2026-98432.sh` 출력으로 확인.
+점검 근거: `martin`(비-root) 직접 측정 + b300 외부 스캔. root 전용 항목(iptables·ufw 규칙, 계정 잠금, sudoers 내용)은 관리자가 실행한 `scripts/hardening/harden.sh` / `fix-control-plane.sh`(journal `fixcp`) / `scripts/hardening/mitigate-cve-2026-98432.sh` 출력으로 확인.
 
 ### 6.1 발견 사항별 최종 판정
 
@@ -118,10 +118,10 @@ root 전용 항목(ufw 규칙, 각 사용자 authorized_keys, chage, crontab)은
 | H2 ngrok 에이전트 API | `127.0.0.1:4040` 응답 없음(000), systemd `ngrok-headscale` active/enabled, 고정 도메인 `headscale-tunnel.example` | `curl :4040`, `/health` 200 | ✅ 해소 |
 | H3 포워딩·셸 피벗 | sshd `Match Group students`(local 포워딩·localhost만, X11·터널 off), `student-egress` active/enabled | sshd 설정, fixcp verify: 5000/11434/19999/NAS 2294/b300 22/Mac mini 22 전부 `blocked`, pypi 200 | ✅ 해소 |
 | M1 student6 sudo | `sudo` 그룹 = martin만 | `getent group sudo` | ✅ 해소 |
-| M2 NOPASSWD install/mv | `oah-agent` → `/usr/local/bin/ollama`만 (파일 440 root) | harden.sh 출력 `parsed OK` | ✅ 해소 |
-| M3 ollama | `OLLAMA_KEEP_ALIVE=0`, ufw `11434 on enp6s0 DENY`, 학생 차단 | `systemctl show`, harden.sh ufw 출력 | ✅ 해소 (바인딩은 0.0.0.0 유지 — docker 브리지용) |
+| M2 NOPASSWD install/mv | `oah-agent` → `/usr/local/bin/ollama`만 (파일 440 root) | scripts/hardening/harden.sh 출력 `parsed OK` | ✅ 해소 |
+| M3 ollama | `OLLAMA_KEEP_ALIVE=0`, ufw `11434 on enp6s0 DENY`, 학생 차단 | `systemctl show`, scripts/hardening/harden.sh ufw 출력 | ✅ 해소 (바인딩은 0.0.0.0 유지 — docker 브리지용) |
 | M4 업데이트·재부팅 | **reboot-required, 보안 업데이트 29건 대기** | `/var/run/reboot-required`, `apt list` | ⏳ 미해소 — `sudo bash ~/harden.sh --reboot` 필요 |
-| L1 미사용 계정 | student5·student6·student4 잠금(`-L -e 1`), student1 만료 2027-01-04 | harden.sh `locked …`, fixcp `Account expires: Jan 04, 2027` | ✅ 해소 |
+| L1 미사용 계정 | student5·student6·student4 잠금(`-L -e 1`), student1 만료 2027-01-04 | scripts/hardening/harden.sh `locked …`, fixcp `Account expires: Jan 04, 2027` | ✅ 해소 |
 | L2 기타 | `/tmp/RustDesk` 1777, Headscale `data/` 755, 9080/9091 → 127.0.0.1, 학생 X11 off | `stat`, `docker ps` | ✅ 해소 (netdata는 학생 egress로 차단) |
 | 비밀정보 노출 | HF token·.env·secret.yaml 600, 재스캔 결과 world-readable 비밀 파일 0건 | `stat`, `find -perm -0004` | ✅ 해소 / ⏳ **HF·Gemini 키 재발급(사용자)** |
 | CVE-2026-98432 | nft 완화 active/enabled, IP-옵션 SYN 차단(학생: 적용 전 REACHES → 후 BLOCKED) | mitigate 스크립트 1회차 출력, martin·tailnet 재검증 | 🟠 완화됨 / ❌ 커널 미수정(`pro fix`: not resolved) |

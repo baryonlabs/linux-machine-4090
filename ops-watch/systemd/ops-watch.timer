@@ -1,0 +1,10 @@
+[Unit]
+Description=run ops-watch every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

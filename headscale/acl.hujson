@@ -1,15 +1,32 @@
 // Headscale ACL policy — mounted at /etc/headscale/acl.hujson
-// martin: full access. Students: only SSH (2322) on the 4090 box.
+// martin: full access.
+// Students: Only SSH (2322) and multi-tenant JupyterLab ports (8888-8895) on the 4090 box.
+// All other hosts (admin Mac, Mac mini, other students) are strictly isolated and hidden.
 {
   "groups": {
     "group:admin":    ["martin@"],
-    "group:students": ["student1@"]
+    "group:students": ["student1@", "student2@", "student3@"]
   },
   "hosts": {
     "gpu4090": "100.64.0.2/32"
   },
   "acls": [
-    { "action": "accept", "src": ["group:admin"],    "dst": ["*:*"] },
-    { "action": "accept", "src": ["group:students"], "dst": ["gpu4090:2322"] }
+    // 1. 관리자(martin): 전체 네트워크 및 모든 포트 무제한 통신
+    {
+      "action": "accept",
+      "src": ["group:admin"],
+      "dst": ["*:*"]
+    },
+
+    // 2. 학생 연구원: GPU 4090 서버의 SSH(2322) 및 전용 학생 주피터랩 포트(8889-8895)만 허용
+    // ⚠️ 관리자 주피터랩(8888) 및 관리자 PC/타 학생 장비는 100% 완전 차단 (패킷 DROP)
+    {
+      "action": "accept",
+      "src": ["group:students"],
+      "dst": [
+        "gpu4090:2322",
+        "gpu4090:8889-8895"
+      ]
+    }
   ]
 }

@@ -26,9 +26,9 @@
 -w /etc/audit/ -p wa -k audit_config
 -w /etc/labops/ -p wa -k labops_config
 
-## --- reads of /etc/shadow by logged-in users (incl. failed attempts by students; PAM/daemons have auid unset)
--a always,exit -F arch=b64 -S open,openat,openat2 -F path=/etc/shadow -F auid>=1000 -F auid!=unset -k shadow_read
--a always,exit -F arch=b32 -S open,openat -F path=/etc/shadow -F auid>=1000 -F auid!=unset -k shadow_read
+## --- reads of /etc/shadow by non-root logged-in users (root sshd/PAM helpers retain the session auid)
+-a always,exit -F arch=b64 -S open,openat,openat2 -F path=/etc/shadow -F auid>=1000 -F auid!=unset -F uid>=1000 -k shadow_read
+-a always,exit -F arch=b32 -S open,openat -F path=/etc/shadow -F auid>=1000 -F auid!=unset -F uid>=1000 -k shadow_read
 
 ## --- CVE-2026-98432: setsockopt(fd, IPPROTO_IP=0, IP_OPTIONS=4, ...) — any user, success or not
 -a always,exit -F arch=b64 -S setsockopt -F a1=0 -F a2=4 -k cve_2026_98432

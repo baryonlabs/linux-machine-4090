@@ -1,7 +1,28 @@
+# Python
 *.pyc
-*.url
-.DS_Store
 __pycache__/
+
+# Secrets & local credentials — never commit
+secrets/
+*.url
+.env
+.env.*
+
+# Personal / lab-private material (emails, notices, user data)
+private/
+emails/
+
+# Runtime state & logs
+state/
+*.log
+
+# Agent/tool local state
+.agents/
+.gemini/
+
+# OS
+.DS_Store
+
+# Legacy one-off files kept out of the repo
 email-reply-student1.txt
 fix-control-plane.sh
-secrets/

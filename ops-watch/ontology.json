@@ -1,0 +1,556 @@
+{
+  "metadata": {
+    "name": "ops-watch-security-ontology",
+    "version": "1.5.0",
+    "framework": "NVIDIA Auto-Ontology & Apache Ossie Compatible",
+    "last_updated": "2026-11-06 05:05:00",
+    "description": "Semantic operational layer, containerized JupyterLab entities, DeepSpeed ZeRO-2 policies, NVMe thermal guards, and decision constraints for shared RTX 4090 research server."
+  },
+  "background": {
+    "system_name": "martin-B650M-K",
+    "hardware": "AMD Ryzen Desktop + NVIDIA GeForce RTX 4090 24GB",
+    "purpose": "Shared multi-tenant machine learning & LLM research server",
+    "network": {
+      "tailnet": "Headscale VPN mesh (100.64.0.0/10)",
+      "ssh_service": "sshd bound on port 2322",
+      "internet_access": "Restricted outbound proxy, no direct internal LAN access"
+    },
+    "workspaces": {
+      "user_storage": "/data/users/<username>",
+      "system_roots": "Read-only / immutable where possible"
+    }
+  },
+  "terms": [
+    {
+      "name": "AdminOperator",
+      "synonyms": [
+        "martin",
+        "root-admin",
+        "system administrator"
+      ],
+      "description": "Primary administrator managing host configuration, user accounts, and security baselines. System maintenance by this user is logged but not flagged as an anomaly."
+    },
+    {
+      "name": "StudentResearcher",
+      "synonyms": [
+        "student",
+        "lab user",
+        "restricted tenant"
+      ],
+      "description": "Lab members granted GPU access and personal data directory via Headscale. Strictly prohibited from sudo, direct container daemon access, or lateral LAN movement."
+    },
+    {
+      "name": "HeadscaleSession",
+      "synonyms": [
+        "vpn session",
+        "tailscale connection",
+        "ssh tunnel"
+      ],
+      "description": "Encrypted VPN wireguard tunnel providing secure network admission to the research server."
+    },
+    {
+      "name": "FalcoAlert",
+      "synonyms": [
+        "ebpf alert",
+        "runtime security signal",
+        "falco-modern-bpf event"
+      ],
+      "description": "Kernel-level runtime detection alert emitted by Falco eBPF probe. Alerts require evidence correlation before remediation."
+    },
+    {
+      "name": "AuditdRecord",
+      "synonyms": [
+        "audit log",
+        "syscall trace",
+        "immutable log"
+      ],
+      "description": "Kernel audit subsystem log providing durable non-repudiation evidence for file access and process execution."
+    },
+    {
+      "name": "ApprovalTicket",
+      "synonyms": [
+        "pending ticket",
+        "change request",
+        "ops-ticket"
+      ],
+      "description": "A queued finding requiring human operator explicit approval before any investigative or defensive action is taken."
+    },
+    {
+      "name": "OperationalMemory",
+      "synonyms": [
+        "worklog",
+        "historical precedents",
+        "prior decisions"
+      ],
+      "description": "Durable repository of past triage results, approved actions, and operator feedback used as context for future evaluations."
+    },
+    {
+      "name": "GPUComputeProcess",
+      "synonyms": [
+        "nvidia-smi task",
+        "cuda compute workload",
+        "pytorch job",
+        "vllm process"
+      ],
+      "description": "A computational workload allocating NVIDIA RTX 4090 VRAM and Tensor/CUDA cores. Monitored for fair multi-tenant utilization, zombie persistence, and unapproved compute jobs."
+    },
+    {
+      "name": "ClientDeviceEndpoint",
+      "synonyms": [
+        "client pc",
+        "researcher laptop",
+        "tailnet node",
+        "connecting host"
+      ],
+      "description": "A physical or virtual client machine connecting through Headscale VPN. Identified by hostname, OS, and Tailnet IP address; deviations from baseline trigger endpoint anomaly triage."
+    },
+    {
+      "name": "TemporaryExecutionAnomaly",
+      "synonyms": [
+        "/tmp binary",
+        "/dev/shm execution",
+        "temp script",
+        "unauthorized binary path"
+      ],
+      "description": "Execution of binaries or scripts from world-writable directories (/tmp, /dev/shm, /var/tmp). Highly indicative of web shells, cryptominers, or unauthorized privilege escalation attempts."
+    },
+    {
+      "name": "EmergencyLockdown",
+      "synonyms": [
+        "panic lockdown",
+        "network isolation",
+        "kill switch",
+        "incident containment"
+      ],
+      "description": "A multi-tiered emergency response mechanism that drops student VPN mesh traffic via Headscale ACL and terminates active sessions, while preserving administrator access for forensics."
+    },
+    {
+      "name": "PrivilegedRequest",
+      "synonyms": [
+        "labreq",
+        "sudo request",
+        "package install request",
+        "privilege queue"
+      ],
+      "description": "Formalized request by a student researcher for privileged actions (e.g. system package installation via apt) without granting direct sudo rights, audited and approved by the administrator."
+    },
+    {
+      "name": "SharedStorageDirectory",
+      "synonyms": [
+        "/mnt/data/users",
+        "user data volume",
+        "isolated tenant storage",
+        "~/data"
+      ],
+      "description": "Dedicated storage volume allocated under /mnt/data/users/<username> with 700 permissions, ensuring strictly isolated model weights, checkpoints, and datasets across tenants."
+    },
+    {
+      "name": "BaseFoundationModel",
+      "synonyms": [
+        "base model",
+        "pretrained llm",
+        "foundation model",
+        "llama-3",
+        "qwen"
+      ],
+      "description": "사전학습된 기본 거대언어모델(LLaMA-3-8B, Qwen-2.5, Mistral-7B 등). 파라미터 수, 기본 정밀도(bf16/fp16), 컨텍스트 윈도우 길이를 규정하며 RTX 4090 메모리 적합성 판정의 기준이 됨."
+    },
+    {
+      "name": "FineTuningMethod",
+      "synonyms": [
+        "peft",
+        "lora",
+        "qlora",
+        "parameter efficient fine tuning",
+        "full fine-tuning"
+      ],
+      "description": "모델 파라미터 효율적 튜닝 기법(LoRA rank/alpha, QLoRA 4-bit 양자화, Full-FT). 단일 RTX 4090(24GB) 환경에서 8B 이상 모델의 경우 Full-FT는 금지되며 LoRA/QLoRA만 허용됨."
+    },
+    {
+      "name": "TrainingJobRun",
+      "synonyms": [
+        "finetuning job",
+        "training run",
+        "pytorch training task",
+        "sft session"
+      ],
+      "description": "단일 GPU에서 실행되는 학생 연구원의 파인튜닝 학습 인스턴스. 배치 크기, gradient_accumulation, max_seq_len, optimizer 옵션을 기반으로 VRAM 풋프린트를 추적함."
+    },
+    {
+      "name": "TrainingDataset",
+      "synonyms": [
+        "instruction dataset",
+        "training corpus",
+        "sft dataset",
+        "dataset.jsonl"
+      ],
+      "description": "연구용 대용량 볼륨(/mnt/data/users/<username>)에 보관된 학습 말뭉치 및 지시문 데이터. 총 토큰 수와 포맷(jsonl, parquet)을 명시하여 I/O 병목 및 쿼터를 관리함."
+    },
+    {
+      "name": "CheckpointArtifact",
+      "synonyms": [
+        "adapter weights",
+        "lora checkpoint",
+        "safetensors",
+        "model checkpoint"
+      ],
+      "description": "학습 도중 및 완료 후 저장되는 LoRA 어댑터 가중치(adapter_model.safetensors) 및 검증 Loss 결과물. 격리된 테넌트 디렉터리에 보관됨."
+    },
+    {
+      "name": "ContainerizedJupyterLab",
+      "synonyms": [
+        "jupyter container",
+        "isolated workspace container",
+        "pytorch-24.04-lab"
+      ],
+      "description": "연구원별로 격리 구동되는 Docker 기반 JupyterLab 서비스. 호스트의 GPU와 NVMe I/O를 안전하게 가상화하며, --ipc=host 및 16GB shm_size를 통해 비디오 데이터셋 버스 에러를 방지하고 고유 포트 및 토큰으로 세션을 보호함."
+    },
+    {
+      "name": "DeepSpeedZeROPolicy",
+      "synonyms": [
+        "zero-2 cpu offload",
+        "deepspeed memory policy",
+        "optimizer offload"
+      ],
+      "description": "단일 24GB RTX 4090 환경에서 8B Foundation Model 파인튜닝 시 VRAM 초과(OOM)를 방지하기 위해 Optimizer States를 64GB 호스트 DDR5 RAM으로 오프로드하는 거버넌스 메모리 정책."
+    },
+    {
+      "name": "NVMeThermalGuard",
+      "synonyms": [
+        "nvme thermal sensor",
+        "hwmon1 guard",
+        "ssd overheating protection"
+      ],
+      "description": "PCIe 4.0 NVMe SSD의 온도 센서(/sys/class/hwmon/hwmon1)를 실시간 추적하여 65°C 경고 및 75°C 위험 임계치를 감시. 대용량 비디오 스트리밍 시 스로틀링이나 데이터 손상을 방지하는 하드웨어 보호 기법."
+    },
+    {
+      "name": "ZombieKernelDetector",
+      "synonyms": [
+        "idle kernel detector",
+        "vram leak hunter",
+        "jupyter zombie reaper"
+      ],
+      "description": "Jupyter Notebook 브라우저 창만 닫히고 커널이 4GB 이상의 VRAM을 점유한 채 장시간 유휴(CPU/GPU Util 0%) 상태로 방치되는 세션을 식별하여 자원 회수 티켓을 생성하는 모니터링 에이전트."
+    },
+    {
+      "name": "StorageQuotaScan",
+      "synonyms": [
+        "du scan",
+        "quota calculation",
+        "disk usage measurement",
+        "nice ionice du"
+      ],
+      "description": "Ops-Watch 시스템이 테넌트별 디스크 사용량 및 소프트 쿼터를 산정하기 위해 관리자 계정(martin)으로 실행하는 백그라운드 스토리지 집계 작업. CPU 최저 우선순위(nice -n 19) 및 I/O 최저 우선순위(ionice -c 3)로 동작하여 연구원 작업에 방해되지 않도록 설계됨."
+    }
+  ],
+  "relationships": [
+    {
+      "source": "StudentResearcher",
+      "relation": "authenticates_via",
+      "target": "HeadscaleSession"
+    },
+    {
+      "source": "HeadscaleSession",
+      "relation": "connects_to",
+      "target": "sshd:2322"
+    },
+    {
+      "source": "StudentResearcher",
+      "relation": "connects_from",
+      "target": "ClientDeviceEndpoint"
+    },
+    {
+      "source": "StudentResearcher",
+      "relation": "executes",
+      "target": "GPUComputeProcess"
+    },
+    {
+      "source": "StudentResearcher",
+      "relation": "submits",
+      "target": "PrivilegedRequest"
+    },
+    {
+      "source": "StudentResearcher",
+      "relation": "owns",
+      "target": "SharedStorageDirectory"
+    },
+    {
+      "source": "FalcoAlert",
+      "relation": "creates",
+      "target": "ApprovalTicket"
+    },
+    {
+      "source": "TemporaryExecutionAnomaly",
+      "relation": "creates",
+      "target": "ApprovalTicket"
+    },
+    {
+      "source": "ApprovalTicket",
+      "relation": "evaluated_against",
+      "target": "OperationalMemory"
+    },
+    {
+      "source": "ApprovalTicket",
+      "relation": "requires_approval_from",
+      "target": "AdminOperator"
+    },
+    {
+      "source": "AdminOperator",
+      "relation": "enforces",
+      "target": "EmergencyLockdown"
+    },
+    {
+      "source": "StudentResearcher",
+      "relation": "submits_job",
+      "target": "TrainingJobRun"
+    },
+    {
+      "source": "TrainingJobRun",
+      "relation": "fine_tunes",
+      "target": "BaseFoundationModel"
+    },
+    {
+      "source": "TrainingJobRun",
+      "relation": "applies_strategy",
+      "target": "FineTuningMethod"
+    },
+    {
+      "source": "TrainingJobRun",
+      "relation": "allocates_hardware",
+      "target": "GPUComputeProcess"
+    },
+    {
+      "source": "TrainingJobRun",
+      "relation": "reads_dataset",
+      "target": "TrainingDataset"
+    },
+    {
+      "source": "TrainingJobRun",
+      "relation": "outputs_checkpoint",
+      "target": "CheckpointArtifact"
+    },
+    {
+      "source": "TrainingJobRun",
+      "relation": "executes_in",
+      "target": "ContainerizedJupyterLab"
+    },
+    {
+      "source": "ContainerizedJupyterLab",
+      "relation": "constrained_by",
+      "target": "DeepSpeedZeROPolicy"
+    },
+    {
+      "source": "GPUComputeProcess",
+      "relation": "guarded_by",
+      "target": "NVMeThermalGuard"
+    },
+    {
+      "source": "ContainerizedJupyterLab",
+      "relation": "monitored_by",
+      "target": "ZombieKernelDetector"
+    },
+    {
+      "source": "ZombieKernelDetector",
+      "relation": "triggers",
+      "target": "ApprovalTicket"
+    }
+  ],
+  "normal_patterns": [
+    "PAM, MOTD, systemd --user, PipeWire, WirePlumber and Livepatch may be attributed to a student's login session while actually running as root or a system daemon.",
+    "VS Code Remote-SSH establishes multiple short-lived connections and probes upon login; continuous short reconnects require client-side review, not automatic host banning.",
+    "PyTorch and vLLM allocate unified virtual memory and IPC shared memory (/dev/shm) during training runs, which can look like high memory usage but is normal operation.",
+    "Student data access within /data/users/<username> is expected and authorized.",
+    "LoRA 및 QLoRA 학습 초기 가중치/옵티마이저 할당 시 일시적 VRAM 스파이크 발생 후 설정된 배치 크기로 안정화되는 현상은 정상입니다.",
+    "학습 체크포인트 저장 시 /mnt/data/users/<username>/checkpoints 경로에 주기적 대용량 I/O 쓰기 작업이 발생하는 것은 정상 동작입니다.",
+    "JupyterLab containers running nvcr.io/nvidia/pytorch:24.04-py3 with --ipc=host and 16GB shm_size are authorized baseline workloads.",
+    "NVMe temperatures between 40°C and 65°C under continuous dataset streaming are normal operating conditions for high-speed PCIe 4.0 storage.",
+    "Ops-Watch 백그라운드 스토리지 쿼터 산정 작업(nice -n 19 ionice -c 3 du -s /mnt/data/users/*)은 관리자(martin) 권한으로 수행되는 정기 인프라 측정 작업이며 프로세스 이상 징후로 분류하지 않습니다."
+  ],
+  "incident_signals": [
+    {
+      "signal": "credential_access",
+      "indicators": [
+        "/etc/shadow",
+        "sudoers",
+        "Sensitive file read",
+        "/etc/security"
+      ],
+      "severity": "critical",
+      "description": "Non-root student process attempting to inspect protected system credentials or elevation configuration."
+    },
+    {
+      "signal": "privilege_escalation",
+      "indicators": [
+        "Suspicious ROOT execution",
+        "Unexpected setuid",
+        "setuid binary execution"
+      ],
+      "severity": "critical",
+      "description": "Execution of binaries or scripts gaining unauthorized elevated privileges."
+    },
+    {
+      "signal": "network_anomaly",
+      "indicators": [
+        "crypto-mining",
+        "Raw/packet socket",
+        "internal network scan"
+      ],
+      "severity": "warning",
+      "description": "Unapproved socket creation, lateral network traversal, or unauthorized compute utilization."
+    },
+    {
+      "signal": "endpoint_anomaly",
+      "indicators": [
+        "macbook-ppid",
+        "unregistered_node",
+        "hostname_mismatch"
+      ],
+      "severity": "warning",
+      "description": "Suspicious machine hostname or unexpected device connecting via Headscale VPN. Recommended remediation: expire old node and reissue fresh pre-auth key."
+    },
+    {
+      "signal": "process_anomaly",
+      "indicators": [
+        "Process Anomaly",
+        "deleted binary",
+        "locked account process",
+        "unauthorized temp execution",
+        "masquerading"
+      ],
+      "severity": "critical",
+      "description": "Suspicious process execution from /tmp or /dev/shm, processes owned by locked accounts, or deleted binaries running in memory. Recommended remediation: collect evidence and terminate process if unauthorized."
+    },
+    {
+      "signal": "gpu_vram_hogging",
+      "indicators": [
+        "VRAM > 10GB with util == 0%",
+        "idle compute session",
+        "zombie train script"
+      ],
+      "severity": "warning",
+      "description": "GPU VRAM을 10GB 이상 점유하고 있으나 연산 코어 활용률이 0%인 상태로 2시간 이상 방치된 유휴 세션 감지. 권고 조치: 연구원 확인 후 유휴 프로세스 회수."
+    },
+    {
+      "signal": "cuda_oom_risk",
+      "indicators": [
+        "VRAM Headroom < 1GB",
+        "CUDA out of memory impending",
+        "oversized batch"
+      ],
+      "severity": "critical",
+      "description": "RTX 4090 24GB 메모리 한계 도달 임박(여유 < 1GB)으로 프로세스 크래시 위험 감지. 권고 조치: 배치 크기 축소 또는 gradient_accumulation 권고."
+    },
+    {
+      "signal": "zombie_jupyter_kernel",
+      "indicators": [
+        "Jupyter Kernel Idle > 1hr",
+        "VRAM > 4GB with Util == 0%",
+        "abandoned notebook"
+      ],
+      "severity": "warning",
+      "description": "노트북 브라우저를 닫았으나 커널 종료(Shut Down)를 누르지 않아 24GB VRAM을 독점하고 있는 유휴 커널 감지. 권고: 커널 인터럽트 및 메모리 회수."
+    },
+    {
+      "signal": "nvme_thermal_warning",
+      "indicators": [
+        "NVMe Temp > 65C",
+        "PCIe 4.0 Thermal Throttling",
+        "heavy random disk read"
+      ],
+      "severity": "warning",
+      "description": "대용량 비디오 데이터셋 I/O 또는 과도한 동시 디코딩으로 인해 NVMe 온도가 65°C를 초과함. 권고: DataLoader num_workers 축소 또는 순차 스트리밍 전환."
+    },
+    {
+      "signal": "shm_bus_error_risk",
+      "indicators": [
+        "Bus error (core dumped)",
+        "DataLoader shared memory exhausted",
+        "IPC shm overflow"
+      ],
+      "severity": "critical",
+      "description": "대용량 비디오 멀티 프로세싱 중 컨테이너 shm-size 부족으로 인한 프로세스 크래시 위험. 권고: --ipc=host 및 shm_size 16gb 적용."
+    }
+  ],
+  "decision_policy": {
+    "default_action": "collect evidence and create an approval ticket",
+    "prohibited_automatic_actions": [
+      "sudo changes",
+      "account modification or deletion",
+      "iptables/ufw rule injection",
+      "systemctl restart/stop of shared services",
+      "process termination without explicit ticket approval",
+      "external notification without operator review"
+    ],
+    "evidence_retention": "retain original timestamp, raw log excerpt, LLM reasoning, operator approver, executed action, and post-execution output"
+  },
+  "auto_ontology_binding": {
+    "endpoint": "http://localhost:3000",
+    "api_version": "v1",
+    "mcp_server": "http://localhost:3003/mcp"
+  },
+  "operational_lifecycle": {
+    "when_it_runs": [
+      {
+        "trigger": "보안 스캔 및 주기적 감시 (ops-watch scan / timer)",
+        "timing": "매 5분 주기 또는 운영자 온디맨드 스캔 버튼 클릭 시",
+        "action": "Falco 커널 시스템콜 알림, 접속 단말(PC/OS) 변경, /tmp 및 비인가 프로세스 점검 시 온톨로지 룰 대조"
+      },
+      {
+        "trigger": "AI 티켓 자동 분석 및 의사결정 (ops-watch analyze)",
+        "timing": "이상 징후 발생 직후 또는 [AI 재분석] 클릭 시",
+        "action": "시스템 배경, 개체 관계, 정상 베이스라인, 위협 지표, 운영자 과거 선례를 LLM(agy) 프롬프트에 자동 주입하여 위험도 및 승인 필요 여부 판정"
+      },
+      {
+        "trigger": "웹 콘솔 대시보드 상태 모니터링",
+        "timing": "대시보드 로드 및 상단 상태 바 갱신 시",
+        "action": "NVIDIA Auto-Ontology FastMCP/REST 연결 상태 확인 및 로컬 Apache Ossie 시맨틱 모델 정합성 검증"
+      }
+    ],
+    "how_it_runs": [
+      {
+        "component": "2-Tier 하이브리드 브릿지 (AutoOntologyBridge)",
+        "mechanism": "포트 3000(REST) 및 3003(FastMCP) 연결을 1차 시도하고, 스택 미구동 시 로컬 시맨틱 파일(ontology.json)로 무중단 자동 폴백(Fallback)"
+      },
+      {
+        "component": "5대 맥락 지식 주입 파이프라인 (Context Injection)",
+        "mechanism": "Background(서버 스펙/경로), Terms(개체), Normal Baselines(정상 데몬), Incident Signals(위협 지표), Historical Memory(과거 티켓)를 결합하여 LLM 판단 근거 생성"
+      },
+      {
+        "component": "인간 승인 기반 제약 정책 (Decision Constraints)",
+        "mechanism": "위험한 시스템 변경(sudo, 방화벽, 계정 임의삭제, 프로세스 종료)을 AI가 단독 실행하지 못하도록 온톨로지에서 엄격 금지"
+      }
+    ],
+    "update_history": [
+      {
+        "version": "v1.4.0",
+        "timestamp": "2026-11-06 04:44:00",
+        "category": "GPU 학습 및 LLM 파인튜닝 시맨틱 온톨로지(Apache Ossie) 통합",
+        "details": "BaseFoundationModel, FineTuningMethod, TrainingJobRun, TrainingDataset, CheckpointArtifact 등 5대 LLM 학습 개체 및 VRAM 거버넌스 릴레이션 6종, gpu_vram_hogging/cuda_oom_risk 위협 시그널 등록"
+      },
+      {
+        "version": "v1.3.0",
+        "timestamp": "2026-11-06 04:28:00",
+        "category": "시맨틱 운영 개체(Terms) 대규모 확장 (총 13개 용어 구축)",
+        "details": "GPUComputeProcess, ClientDeviceEndpoint, TemporaryExecutionAnomaly, EmergencyLockdown, PrivilegedRequest, SharedStorageDirectory 등 6대 핵심 운영 용어 및 11개 릴레이션십 추가"
+      },
+      {
+        "version": "v1.2.0",
+        "timestamp": "2026-11-06 04:16:30",
+        "category": "프로세스 이상 감지 지표 (process_anomaly) 추가",
+        "details": "/tmp, /dev/shm 임시 디렉터리 실행 바이너리, 삭제된 바이너리 메모리 구동, 잠긴(locked) 계정 잔여 프로세스, 커널 스레드 위장 탐지 룰 추가"
+      },
+      {
+        "version": "v1.1.0",
+        "timestamp": "2026-11-06 03:52:00",
+        "category": "단말 이상 접속 지표 (endpoint_anomaly) 추가",
+        "details": "비정상 PC 단말명('조용우의 노트북') 접속 사건 기반으로 unregistered_node, hostname_mismatch 지표 등록 및 노드 만료·신규 키 재발급 워크플로 정립"
+      },
+      {
+        "version": "v1.0.0",
+        "timestamp": "2026-11-06 02:45:00",
+        "category": "NVIDIA Auto-Ontology 초기 수립",
+        "details": "RTX 4090 공유 연구 서버용 7대 핵심 엔티티(Admin, Student, Headscale, Falco, Auditd, Ticket, Memory) 정의, PAM/MOTD/Livepatch 정상 패턴, /etc/shadow credential_access 지표 등록"
+      }
+    ]
+  }
+}

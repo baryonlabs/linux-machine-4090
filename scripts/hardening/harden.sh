@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Security remediation for martin-B650M-K — see SECURITY_AUDIT_2026-11-04.md
-# Run:  sudo bash ~/harden.sh            (no reboot)
-#       sudo bash ~/harden.sh --reboot   (apt upgrade + reboot at the end)
+# Security remediation for martin-B650M-K — see docs/security-audit-2026-11-04.md
+# Run:  sudo bash scripts/hardening/harden.sh            (no reboot)
+#       sudo bash scripts/hardening/harden.sh --reboot   (apt upgrade + reboot at the end)
 set -euo pipefail
 export LC_ALL=C
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TS=$(date +%Y%m%d%H%M%S)
 STUDENTS=(student5 student6 student3 student4 student1)
 IDLE_LOCK=(student5 student6 student4)   # 5+ months idle / never logged in
@@ -12,8 +13,13 @@ NGROK_URL="https://headscale-tunnel.example"
 
 step(){ echo; echo "===== $*"; }
 
-# student1 data folder / ~/data link (idempotent)
-[ -f /home/martin/finish-student1.sh ] && { bash /home/martin/finish-student1.sh || echo "!!! finish-student1.sh failed — continuing"; }
+# student1 data folder / ~/data link (idempotent; optional helper next to this script)
+for helper in "$HERE/finish-student1.sh" "$HERE/../setup/finish-student1.sh" /home/martin/finish-student1.sh; do
+  if [ -f "$helper" ]; then
+    bash "$helper" || echo "!!! $(basename "$helper") failed — continuing"
+    break
+  fi
+done
 
 # ---------------------------------------------------------------- M1, L1
 step "M1: remove sudo from student6"

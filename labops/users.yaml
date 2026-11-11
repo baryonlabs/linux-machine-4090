@@ -21,6 +21,7 @@ users:
 
   - name: student1
     full_name: "Student One"
+    email: "student1@example.com"
     role: student
     state: active
     expires: 2027-01-04
@@ -29,15 +30,27 @@ users:
     ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFvPqZ6z5VpwDrj62nipTVf9bi4eGn495pOtMSAUa6k student1@macbook-ppid"
     notes: "video multi-target captioning, LoRA on 8B models"
 
-  - name: student3
-    full_name: "student3@example.com"
+  - name: student2
+    full_name: "Student Two"
+    email: "student2@example.com"
     role: student
     state: active
-    expires: null             # TODO: set an end date
-    headscale: false          # was on the old tailscale.com tailnet; set true + `labctl add` to onboard to Headscale
+    expires: 2027-01-04
+    headscale: true
+    gpu: true
+    ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJyM2brFlRQLLUcPb4osQWtcUYXFZ6cC/DenSr+DLYLj student2@example.com"
+    notes: "VLA/VLM research; SSH public key verified and received 2026-11-08"
+
+  - name: student3
+    full_name: "student3@example.com"
+    email: "student3@example.com"
+    role: student
+    state: active
+    expires: 2027-01-04
+    headscale: true
     gpu: true
     ssh_pubkey: null          # existing authorized_keys kept as-is
-    notes: "last login 2026-10-22; shell zsh; member of sglang group"
+    notes: "sglang group; Headscale key issued 2026-11-06"
 
   - name: student5
     full_name: "student5"
