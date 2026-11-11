@@ -59,29 +59,12 @@ GPU 1대 → 사용자별 격리 → 원격 접속 → 사용량 관제 → 사�
 
 ---
 
-## 3. 아키텍처 요약
+## 3. 아키텍처
 
-```
-[연구원 단말] ──WireGuard(Tailscale/Headscale)──┐
-                                               │  100.64.0.0/10
-                                     ┌─────────▼──────────┐
-                                     │  martin-B650M-K    │
-                                     │  RTX 4090 / Ubuntu │
-                                     │                    │
-   SSH :2322  ──────────────────────▶│ sshd (키 전용)     │
-   JupyterLab :8889-8895 ───────────▶│ Docker 컨테이너     │
-                                     │                    │
-                                     │ ufw + student-egress│
-                                     │ auditd + Falco      │
-                                     │ ops-watch :23450    │
-                                     └─────────┬──────────┘
-                                               │ SSH 메트릭 수집
-                                     ┌─────────▼──────────┐
-                                     │ Ops-Watch Dashboard│
-                                     │ 티켓 · 메트릭 · 알림 │
-                                     │ LLM triage (폴백)   │
-                                     └────────────────────┘
-```
+![Baryon Lab 4090 서버 아키텍처](docs/architecture.png)
+
+> 원본(HTML, 확대 가능): [`docs/architecture.html`](docs/architecture.html)
+> — **서버 설치 항목**(호스트 서비스·Docker·스토리지), **맥용 관리자 앱**(Ops-Watch), **Discord 알림 경로**까지 한 장에 정리했습니다.
 
 - **접속**: Tailnet 전용, SSH는 비표준 `2322`, 키 인증만 허용
 - **격리**: 학생 계정은 `gpu4090:2322`만 허용(ACL), egress 방화벽으로 LAN·타 노드·관리 포트 차단

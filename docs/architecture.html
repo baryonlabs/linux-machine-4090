@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Baryon Lab · 4090 Server Architecture</title>
+<style>
+  :root{
+    --bg:#070b14; --panel:#0d1524; --panel2:#111c2e; --line:#22304a;
+    --text:#e8eefc; --muted:#93a4c3; --dim:#64748b;
+    --emerald:#34d399; --cyan:#38bdf8; --violet:#a78bfa; --amber:#fbbf24;
+    --rose:#fb7185; --slate:#94a3b8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1920px;height:1200px;overflow:hidden}
+  body{
+    background:
+      radial-gradient(1200px 600px at 12% -5%, rgba(52,211,153,.10), transparent 60%),
+      radial-gradient(1000px 520px at 88% 0%, rgba(56,189,248,.10), transparent 60%),
+      radial-gradient(900px 600px at 50% 110%, rgba(167,139,250,.08), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",Roboto,sans-serif;
+    position:relative;
+  }
+  body::before{
+    content:"";position:absolute;inset:0;
+    background-image:linear-gradient(rgba(148,163,184,.045) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(148,163,184,.045) 1px,transparent 1px);
+    background-size:40px 40px;pointer-events:none;
+  }
+  .canvas{position:relative;width:1920px;height:1200px;padding:34px 40px}
+
+  header{display:flex;align-items:flex-end;justify-content:space-between;height:104px;border-bottom:1px solid var(--line);padding-bottom:16px}
+  .brand{display:flex;align-items:center;gap:16px}
+  .logo{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#10b981,#06b6d4);
+        display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;color:#04121a;
+        box-shadow:0 8px 24px rgba(16,185,129,.35)}
+  h1{font-size:27px;letter-spacing:-.6px;font-weight:800}
+  h1 span{color:var(--emerald)}
+  .sub{margin-top:5px;font-size:13.5px;color:var(--muted)}
+  .legend{display:flex;gap:18px;align-items:center;font-size:12px;color:var(--muted)}
+  .legend b{color:var(--text);font-weight:600}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+
+  .col{position:absolute;top:160px}
+  .col-label{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;font-weight:700}
+
+  .card{background:linear-gradient(180deg,rgba(20,31,50,.96),rgba(12,20,34,.96));border:1px solid var(--line);
+        border-radius:14px;padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.28)}
+  .card.tight{padding:12px 14px}
+  .card h3{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .card .meta{font-size:11.5px;color:var(--muted);margin-top:4px}
+  .card ul{list-style:none;margin-top:9px;display:flex;flex-direction:column;gap:5px}
+  .card li{font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+  .card li b{color:var(--text);font-weight:600}
+
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:999px;font-size:10.5px;
+        font-weight:700;border:1px solid transparent;white-space:nowrap}
+  .p-ssh{background:rgba(56,189,248,.12);color:#7dd3fc;border-color:rgba(56,189,248,.4)}
+  .p-gpu{background:rgba(52,211,153,.12);color:#6ee7b7;border-color:rgba(52,211,153,.4)}
+  .p-vpn{background:rgba(167,139,250,.12);color:#c4b5fd;border-color:rgba(167,139,250,.4)}
+  .p-warn{background:rgba(251,191,36,.12);color:#fcd34d;border-color:rgba(251,191,36,.4)}
+  .p-slate{background:rgba(148,163,184,.10);color:#cbd5e1;border-color:rgba(148,163,184,.3)}
+
+  .client{display:flex;align-items:center;gap:12px}
+  .avatar{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+          font-size:17px;background:#152238;border:1px solid #22314a;flex:0 0 auto}
+  .client .who{font-size:13px;font-weight:700}
+  .client .ip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:var(--cyan)}
+  .client .badges{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
+
+  .server-frame{position:absolute;left:780px;top:160px;width:680px;height:846px;
+    background:linear-gradient(180deg,rgba(13,22,38,.9),rgba(9,16,28,.95));
+    border:1px solid #1d4f43;border-radius:18px;box-shadow:0 0 0 1px rgba(52,211,153,.08),0 20px 60px rgba(0,0,0,.45)}
+  .server-head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #1d4f43}
+  .server-head .name{font-size:16px;font-weight:800}
+  .server-head .name small{color:var(--muted);font-weight:500;font-size:11.5px;margin-left:8px}
+
+  .subpanel{margin:13px 18px 0;border:1px solid var(--line);border-radius:12px;background:rgba(17,28,46,.7);padding:11px 14px}
+  .subpanel .head{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:800;margin-bottom:8px;display:flex;justify-content:space-between}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-size:10.5px;padding:4px 8px;border-radius:7px;background:#0e1a2c;border:1px solid #1f2f4a;color:#c7d4ea}
+  .chip b{color:#fff;font-weight:600}
+  .chip .pt{color:var(--cyan);font-family:ui-monospace,Menlo,monospace}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .svc{display:flex;justify-content:space-between;gap:8px;font-size:11px;padding:5px 8px;border-radius:7px;background:#0e1a2c;border:1px solid #1f2f4a}
+  .svc span:first-child{color:#dbe6f7}
+  .svc span:last-child{color:var(--dim);font-family:ui-monospace,Menlo,monospace;font-size:10px}
+
+  .storage-bar{height:8px;border-radius:99px;background:#0b1524;border:1px solid #1f2f4a;overflow:hidden;margin-top:8px}
+  .storage-bar i{display:block;height:100%;width:29%;background:linear-gradient(90deg,#10b981,#22d3ee)}
+
+  .arrow-label{position:absolute;font-size:9.5px;color:#b6c6e0;background:#0b1524;border:1px solid #22304a;
+    padding:2px 6px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-50%);font-weight:600;z-index:5}
+  svg.wires{position:absolute;inset:0;width:1920px;height:1200px;pointer-events:none}
+
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:var(--muted);margin-top:5px}
+  .kv b{color:var(--text);font-weight:600}
+  .flow{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin-top:7px;flex-wrap:wrap}
+  .flow .n{background:#0e1a2c;border:1px solid #22304a;border-radius:6px;padding:3px 7px;color:#dbe6f7;font-size:10.5px}
+  .flow .a{color:var(--dim)}
+  .footnote{position:absolute;left:40px;bottom:18px;font-size:10.5px;color:var(--dim)}
+
+  .path{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin-top:6px}
+  .path .who{width:64px;color:#dbe6f7;font-weight:700;font-size:10.5px}
+  .path .hop{background:#0e1a2c;border:1px solid #22304a;border-radius:6px;padding:3px 7px;font-size:10px;color:#c7d4ea}
+  .path .ar{color:var(--dim);font-size:10px}
+</style>
+</head>
+<body>
+<div class="canvas">
+
+  <header>
+    <div class="brand">
+      <div class="logo">OW</div>
+      <div>
+        <h1>Baryon Lab <span>·</span> RTX 4090 Server Architecture</h1>
+        <div class="sub">단일 GPU 연구실을 위한 사설망 · 계정 격리 · 관제 · LLM 트리아지 · Discord 알림 전체 구성</div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:#a78bfa"></i><b>WireGuard</b> 100.64.0.0/10</span>
+      <span><i class="dot" style="background:#38bdf8"></i><b>SSH</b> :2322</span>
+      <span><i class="dot" style="background:#34d399"></i><b>Webhook</b> HTTPS</span>
+      <span><i class="dot" style="background:#fbbf24"></i><b>LLM</b> API</span>
+    </div>
+  </header>
+
+  <!-- ===================== COL 1 : CLIENTS ===================== -->
+  <div class="col" style="left:40px;width:290px">
+    <div class="col-label">01 · Clients</div>
+
+    <div class="card" style="height:148px;margin-bottom:13px">
+      <div class="client">
+        <div class="avatar">🍎</div>
+        <div>
+          <div class="who">Student One · 연구원</div>
+          <div class="ip">100.64.0.6 · macOS 26.2</div>
+        </div>
+      </div>
+      <div class="badges" style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
+        <span class="pill p-ssh">SSH 2322</span>
+        <span class="pill p-gpu">Jupyter :8889</span>
+      </div>
+      <div class="meta" style="margin-top:8px">seonghyun-device2 · Mac14,15</div>
+    </div>
+
+    <div class="card" style="height:148px;margin-bottom:13px">
+      <div class="client">
+        <div class="avatar">🪟</div>
+        <div>
+          <div class="who">Student Two · 연구원</div>
+          <div class="ip">100.64.0.9 · Windows 10.0.26</div>
+        </div>
+      </div>
+      <div class="badges" style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
+        <span class="pill p-ssh">SSH 2322</span>
+        <span class="pill p-gpu">Jupyter :8890</span>
+      </div>
+      <div class="meta" style="margin-top:8px">asus · amd64</div>
+    </div>
+
+    <div class="card" style="height:148px;margin-bottom:13px">
+      <div class="client">
+        <div class="avatar">🍎</div>
+        <div>
+          <div class="who">Student Three · 연구원</div>
+          <div class="ip">100.64.0.8 · macOS 26.4</div>
+        </div>
+      </div>
+      <div class="badges" style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
+        <span class="pill p-ssh">SSH 2322</span>
+        <span class="pill p-gpu">Jupyter :8891</span>
+      </div>
+      <div class="meta" style="margin-top:8px">imshen-macbook · MacBookPro18,3</div>
+    </div>
+
+    <div class="card" style="height:148px;margin-bottom:13px;border-color:#3b2f66">
+      <div class="client">
+        <div class="avatar">🧑‍💻</div>
+        <div>
+          <div class="who">관리자 · martin</div>
+          <div class="ip">100.64.0.1 / .0.4 / .0.5</div>
+        </div>
+      </div>
+      <div class="badges" style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">
+        <span class="pill p-vpn">ACL *:*</span>
+        <span class="pill p-warn">Ops-Watch</span>
+      </div>
+      <div class="meta" style="margin-top:8px">MacBook Pro · Mac mini · b300</div>
+    </div>
+
+    <div class="card tight" style="height:150px;background:rgba(17,28,46,.55)">
+      <h3 style="font-size:12.5px">🔐 접속 원칙</h3>
+      <ul>
+        <li><span>공인 IP 인바운드</span><b style="color:#6ee7b7">없음</b></li>
+        <li><span>SSH 인증</span><b>공개키 전용</b></li>
+        <li><span>학생 ACL</span><b>2322 + 8889-8895</b></li>
+        <li><span>계정 만료</span><b>2027-01-04</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== COL 2 : VPN ===================== -->
+  <div class="col" style="left:410px;width:280px">
+    <div class="col-label">02 · Private Mesh</div>
+
+    <div class="card" style="height:208px;margin-bottom:13px;border-color:#3b2f66">
+      <h3>🛰️ Headscale <span class="pill p-vpn" style="margin-left:auto">v0.29.x</span></h3>
+      <div class="meta">Tailscale 호환 자체 제어 서버 (Docker)</div>
+      <ul>
+        <li><span>컨테이너</span><b>headscale</b></li>
+        <li><span>API 바인드</span><b>127.0.0.1:9080</b></li>
+        <li><span>메트릭</span><b>127.0.0.1:9091</b></li>
+        <li><span>프록시</span><b>Caddy :80/:443</b></li>
+        <li><span>DERP</span><b>Tokyo (fallback)</b></li>
+      </ul>
+    </div>
+
+    <div class="card" style="height:236px;margin-bottom:13px">
+      <h3>📜 ACL <span style="font-size:10px;color:var(--dim);font-weight:600;margin-left:auto">acl.hujson</span></h3>
+      <div style="margin-top:9px;display:flex;flex-direction:column;gap:8px">
+        <div style="background:#0e1a2c;border:1px solid #22304a;border-radius:8px;padding:8px 9px">
+          <div style="font-size:11px;font-weight:700;color:#c4b5fd">group:admin → *:*</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">martin · 전체 기기/포트</div>
+        </div>
+        <div style="background:#0e1a2c;border:1px solid #22304a;border-radius:8px;padding:8px 9px">
+          <div style="font-size:11px;font-weight:700;color:#7dd3fc">group:students → gpu4090</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">:2322 · :8889-8895 만 허용</div>
+        </div>
+        <div style="background:#0e1a2c;border:1px solid #22304a;border-radius:8px;padding:8px 9px">
+          <div style="font-size:11px;font-weight:700;color:#fcd34d">계정 정책</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">pre-auth key · 노드 만료 · 30일</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card tight" style="height:170px;background:rgba(17,28,46,.55)">
+      <h3 style="font-size:12.5px">🧱 격리 계층</h3>
+      <ul>
+        <li><span>학생 → 타 노드</span><b style="color:#fda4af">차단</b></li>
+        <li><span>학생 → LAN/NAS</span><b style="color:#fda4af">차단</b></li>
+        <li><span>학생 → 관리자 :8888</span><b style="color:#fda4af">차단</b></li>
+        <li><span>학생 → 인터넷(pypi)</span><b style="color:#6ee7b7">허용</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== COL 3 : SERVER ===================== -->
+  <div class="server-frame">
+    <div class="server-head">
+      <div class="name">🖥️ martin-B650M-K <small>100.64.0.2 · Ubuntu 26.04 · kernel 6.8.0-147</small></div>
+      <span class="pill p-gpu">RTX 4090 24GB</span>
+    </div>
+
+    <div class="subpanel">
+      <div class="head"><span>Host services</span><span>systemd</span></div>
+      <div class="chips">
+        <span class="chip"><b>sshd</b> <span class="pt">:2322</span></span>
+        <span class="chip"><b>tailscaled</b></span>
+        <span class="chip"><b>ufw</b> deny-in</span>
+        <span class="chip"><b>student-egress</b></span>
+        <span class="chip"><b>fail2ban</b></span>
+        <span class="chip"><b>auditd</b></span>
+        <span class="chip"><b>falco</b> +sidekick</span>
+        <span class="chip"><b>netdata</b></span>
+        <span class="chip"><b>ollama</b></span>
+        <span class="chip"><b>rustdesk</b></span>
+      </div>
+      <div class="flow">
+        <span class="n">labops-gpu-collect 1m</span><span class="a">·</span>
+        <span class="n">labops-audit-alert 5m</span><span class="a">·</span>
+        <span class="n">labops-executor 10m</span><span class="a">·</span>
+        <span class="n">lynis weekly</span>
+      </div>
+      <div class="flow">
+        <span class="n">nftables cve_2026_98432</span>
+        <span style="font-size:10.5px;color:var(--dim)">IP options TCP 드롭 (커널 패치 전 완화)</span>
+      </div>
+    </div>
+
+    <div class="subpanel">
+      <div class="head"><span>Docker workloads</span><span>docker-ce 29.9</span></div>
+      <div class="grid2">
+        <div class="svc"><span>headscale</span><span>127.0.0.1:9080</span></div>
+        <div class="svc"><span>headscale-caddy</span><span>:80 / :443</span></div>
+        <div class="svc"><span>registry</span><span>127.0.0.1:5000</span></div>
+        <div class="svc"><span>kb-lightrag</span><span>:9621</span></div>
+        <div class="svc"><span>kb-postgres</span><span>127.0.0.1:5432</span></div>
+        <div class="svc"><span>b300-socks</span><span>egress proxy</span></div>
+        <div class="svc" style="border-color:#2a4a6b"><span>student1_jupyter</span><span>:8889</span></div>
+        <div class="svc" style="border-color:#2a4a6b"><span>student3_jupyter</span><span>:8891</span></div>
+        <div class="svc" style="border-color:#4a3a6b"><span>dureclaw headscale</span><span>:8080</span></div>
+        <div class="svc"><span>GPU runtime</span><span>nvidia-toolkit 1.20</span></div>
+      </div>
+      <div class="flow" style="margin-top:8px">
+        <span class="n">jupyter container</span><span class="a">→</span>
+        <span class="n">/mnt/data/users/&lt;user&gt;</span><span class="a">·</span>
+        <span class="n">/home/&lt;user&gt;</span><span class="a">·</span>
+        <span class="n">--ipc=host</span><span class="a">·</span>
+        <span class="n">GPU all</span>
+      </div>
+    </div>
+
+    <div class="subpanel">
+      <div class="head"><span>Storage</span><span>/mnt/data</span></div>
+      <div class="kv"><span>/dev/sda1 · 7.3 TB</span><b>2.1 TB used · 4.8 TB free (30%)</b></div>
+      <div class="storage-bar"><i></i></div>
+      <div class="flow" style="margin-top:8px">
+        <span class="n">admin2</span><span class="n">student3</span><span class="n">student1</span>
+        <span class="n">student2</span><span class="n">martin</span>
+      </div>
+    </div>
+
+    <div class="subpanel" style="background:rgba(16,185,129,.06);border-color:#1d4f43">
+      <div class="head" style="margin-bottom:6px"><span>Request paths</span><span>end-to-end</span></div>
+      <div class="path">
+        <span class="who">학생 SSH</span>
+        <span class="hop">:2322</span><span class="ar">→</span>
+        <span class="hop">sshd (키 전용)</span><span class="ar">→</span>
+        <span class="hop">bash / tmux</span>
+      </div>
+      <div class="path">
+        <span class="who">학생 Jupyter</span>
+        <span class="hop">:8889-8895</span><span class="ar">→</span>
+        <span class="hop">컨테이너</span><span class="ar">→</span>
+        <span class="hop">/mnt/data/users/&lt;user&gt;</span>
+      </div>
+      <div class="path">
+        <span class="who">관리자</span>
+        <span class="hop">ops-watch</span><span class="ar">→</span>
+        <span class="hop">SSH 메트릭/저널</span><span class="ar">→</span>
+        <span class="hop">티켓 · 알림</span>
+      </div>
+    </div>
+
+    <div class="subpanel" style="background:rgba(16,185,129,.06);border-color:#1d4f43">
+      <div class="head" style="margin-bottom:6px"><span>Runtime posture</span><span>verified</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <span class="pill p-ssh">SSH 키 전용</span>
+        <span class="pill p-gpu">GPU 격리</span>
+        <span class="pill p-vpn">사설망 전용</span>
+        <span class="pill p-warn">감사 로그</span>
+        <span class="pill p-slate">공인 포트 0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== COL 4 : ADMIN / DISCORD ===================== -->
+  <div class="col" style="left:1550px;width:330px">
+    <div class="col-label">03 · Admin &amp; Alerting</div>
+
+    <div class="card" style="height:430px;margin-bottom:16px;border-color:#4a3a6b">
+      <h3>🖥️ Ops-Watch Console <span class="pill p-slate" style="margin-left:auto">v2.0.0</span></h3>
+      <div class="meta">macOS 앱 · Chrome app mode → 127.0.0.1:23450</div>
+
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:6px">
+        <div class="svc"><span>📊 대시보드 / 메트릭</span><span>GPU·NVMe·스토리지</span></div>
+        <div class="svc"><span>🎫 티켓 · 승인 워크플로</span><span>allowlist</span></div>
+        <div class="svc"><span>🛰️ VPN · ACL</span><span>headscale</span></div>
+        <div class="svc"><span>🐳 도커 &amp; Jupyter</span><span>lifecycle</span></div>
+        <div class="svc"><span>🧠 온톨로지 · 워크로그</span><span>ontology.json</span></div>
+      </div>
+
+      <div style="margin-top:12px;padding:10px;border:1px solid #22304a;border-radius:9px;background:#0b1524">
+        <div style="font-size:10px;letter-spacing:.12em;color:var(--dim);font-weight:800;text-transform:uppercase">Background loops</div>
+        <div class="flow" style="margin-top:6px">
+          <span class="n">journal scan 300s</span><span class="a">·</span>
+          <span class="n">SSH watchdog 60s</span>
+        </div>
+        <div class="flow">
+          <span class="n">endpoint tracker</span><span class="a">·</span>
+          <span class="n">process inspector</span>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.55">
+        메트릭 수집은 <b style="color:#dbe6f7">linux-builder(:2322)</b> 경유.
+        헬스체크는 ping이 아니라 <b style="color:#dbe6f7">TCP 2322 + SSH 배너</b>.
+      </div>
+    </div>
+
+    <div class="card" style="height:170px;margin-bottom:16px;border-color:#4a3a1b">
+      <h3>🤖 LLM Triage Chain <span class="pill p-warn" style="margin-left:auto">fallback</span></h3>
+      <div style="margin-top:9px;display:flex;flex-direction:column;gap:6px">
+        <div class="svc" style="border-color:#5a4a1b"><span>1 · agy</span><span>gemini-3.8-flash-medium</span></div>
+        <div class="svc"><span>2 · opencode</span><span>deepseek-v4.1-flash</span></div>
+        <div class="svc"><span>3 · openrouter</span><span>deepseek-v4.1-flash</span></div>
+      </div>
+      <div class="meta" style="margin-top:7px">JSON Schema 강제 · 제공자/모델 worklog 기록</div>
+    </div>
+
+    <div class="card" style="height:268px;border-color:#3b2f66">
+      <h3>💬 Discord <span class="pill p-vpn" style="margin-left:auto">webhook</span></h3>
+      <div class="meta">LabOps RTX 4090 Bot · ai.baryon.ai</div>
+      <ul style="margin-top:9px">
+        <li><span>GPU 사용률/VRAM 변동</span><b>10분</b></li>
+        <li><span>auditd 고신호 이벤트</span><b>5분</b></li>
+        <li><span>단말/OS 변경 · SSH 장애</span><b>즉시</b></li>
+        <li><span>비상 락다운</span><b>즉시</b></li>
+      </ul>
+      <div style="margin-top:9px;padding:8px;border:1px dashed #3b4a66;border-radius:8px;font-size:10.5px;color:var(--dim);line-height:1.5">
+        서버: cron 10m + labops timer 5m<br>
+        webhook: /etc/labops/discord-webhook.url (root 600)<br>
+        Mac: secrets/discord-webhook.url
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== WIRES ===================== -->
+  <svg class="wires" viewBox="0 0 1920 1200">
+    <defs>
+      <marker id="ah" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+        <path d="M0,0 L8,3 L0,6 z" fill="#a78bfa"/>
+      </marker>
+      <marker id="ahc" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+        <path d="M0,0 L8,3 L0,6 z" fill="#38bdf8"/>
+      </marker>
+      <marker id="ahg" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+        <path d="M0,0 L8,3 L0,6 z" fill="#34d399"/>
+      </marker>
+    </defs>
+
+    <!-- clients -> mesh -->
+    <path d="M330,455 H410" stroke="#a78bfa" stroke-width="2.2" fill="none" marker-end="url(#ah)"/>
+    <!-- mesh -> server -->
+    <path d="M690,455 H780" stroke="#a78bfa" stroke-width="2.2" fill="none" marker-end="url(#ah)"/>
+
+    <!-- server <-> admin (ssh metrics) -->
+    <path d="M1460,352 H1550" stroke="#38bdf8" stroke-width="2.2" fill="none" marker-end="url(#ahc)"/>
+    <path d="M1550,388 H1460" stroke="#38bdf8" stroke-width="2.2" fill="none" marker-end="url(#ahc)"/>
+
+    <!-- admin -> discord (route through the gap, around LLM card) -->
+    <path d="M1550,565 H1533 V915 H1550" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#ahg)"/>
+  </svg>
+
+  <div class="arrow-label" style="left:370px;top:437px;width:80px;text-align:center">WireGuard</div>
+  <div class="arrow-label" style="left:735px;top:437px;width:80px;text-align:center">100.64.0.2</div>
+  <div class="arrow-label" style="left:1505px;top:330px">SSH :2322</div>
+  <div class="arrow-label" style="left:1533px;top:740px">webhook</div>
+
+  <div class="footnote">
+    Baryon Lab · martin-B650M-K · generated 2026-11-12 · 모든 포트는 사설망(100.64.0.0/10) 기준 · 공인 IP 인바운드 없음
+  </div>
+</div>
+</body>
+</html>
