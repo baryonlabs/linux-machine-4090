@@ -242,7 +242,7 @@ Issues and PRs are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 
 ## 📄 License
 
-**TBD** — to be chosen before public release (Apache-2.0 or MIT recommended).
+**MIT** © 2026 Baryon Labs — see [`LICENSE`](LICENSE).
 
 > **Maintainers:** before making this repository public, complete [`docs/open-source-checklist.md`](docs/open-source-checklist.md) (secrets, personal data, license, CI).
 
