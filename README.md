@@ -248,13 +248,11 @@ Issues and PRs are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 
 ## ⭐ Star history
 
-<!-- 공개 전환 후 활성화 (프라이빗에서는 이미지가 깨집니다)
 <a href="https://star-history.com/#baryonlabs/linux-machine-4090&Date">
   <img src="https://api.star-history.com/svg?repos=baryonlabs/linux-machine-4090&type=Date" alt="Star History Chart" width="100%">
 </a>
--->
 
-> Repository is **private** for now. Star history and contributor widgets will be enabled when it goes public.
+If this saves you a week of lab operations, a ⭐ helps other small labs find it.
 
 ## 🙏 Acknowledgements
 
