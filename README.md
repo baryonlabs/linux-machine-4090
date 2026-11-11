@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <a href="#-screenshots"><b>Screenshots</b></a> ·
   <a href="#-quick-start"><b>Quick Start</b></a> ·
   <a href="#-architecture"><b>Architecture</b></a> ·
   <a href="#-whats-inside"><b>Components</b></a> ·
@@ -30,6 +31,25 @@
 
 > **English** — An end-to-end operations stack for a single-GPU research workstation: a private Headscale/Tailscale mesh, per-user account lifecycle and isolation, egress firewalling, auditd/Falco detection, a self-hosted observability console, and schema-constrained LLM triage with provider fallback. Built and operated in production, published as a reproducible reference for small labs.
 
+<details>
+<summary><b>목차 · Table of contents</b></summary>
+
+- [✨ Why this exists](#-why-this-exists)
+- [📸 Screenshots](#-screenshots)
+- [🧭 What's inside](#-whats-inside)
+- [🚀 Quick start](#-quick-start)
+- [🏗 Architecture](#-architecture)
+- [🔐 Security model](#-security-model)
+- [🩺 Observability & alerting](#-observability--alerting)
+- [🧠 LLM triage](#-llm-triage)
+- [🛠 Operations runbook](#-operations-runbook)
+- [📓 Case study](#-case-study)
+- [🗺 Roadmap](#-roadmap)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+
+</details>
+
 ---
 
 ## ✨ Why this exists
@@ -42,6 +62,22 @@ Most open-source stacks assume Kubernetes, SSO and an EDR team. A lab with **one
 - **Failure modes are documented, not hidden** — including a 17-hour SSH outage caused by an overlay container flushing the host's iptables chains. See [`docs/incidents/`](docs/incidents/).
 - **LLM automation you can audit** — schema-enforced output, provider fallback, and a record of *which model* made each judgment.
 - **Privacy-safe by default** — emails, keys and personal data live outside the code tree (`secrets/`, `private/`), with a pre-publication checklist.
+
+## 📸 Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/00-overview.png" alt="Ops-Watch console — six screens" width="100%">
+</p>
+
+| | | |
+| :---: | :---: | :---: |
+| <a href="docs/screenshots/01-tickets.png"><img src="docs/screenshots/01-tickets.png" width="100%"></a><br><sub><b>Ticket triage</b> — AI 분석 · 승인 워크플로</sub> | <a href="docs/screenshots/02-gpu.png"><img src="docs/screenshots/02-gpu.png" width="100%"></a><br><sub><b>GPU telemetry</b> — 사용률 · VRAM · 온도</sub> | <a href="docs/screenshots/03-containers.png"><img src="docs/screenshots/03-containers.png" width="100%"></a><br><sub><b>Containers</b> — 9/14 running · Jupyter 수명주기</sub> |
+| <a href="docs/screenshots/04-vpn.png"><img src="docs/screenshots/04-vpn.png" width="100%"></a><br><sub><b>VPN mesh</b> — Headscale 노드 · ACL</sub> | <a href="docs/screenshots/05-users.png"><img src="docs/screenshots/05-users.png" width="100%"></a><br><sub><b>Users</b> — 계정 · GPU · Jupyter · 단말</sub> | <a href="docs/screenshots/06-cve.png"><img src="docs/screenshots/06-cve.png" width="100%"></a><br><sub><b>CVE & hardening</b> — 88/100 점검</sub> |
+
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="Ops-Watch 6-tab walkthrough" width="88%"><br>
+  <sub>6개 탭 워크스루 · 실제 운영 데이터 · 개인정보는 토큰 단위로 블러 처리</sub>
+</p>
 
 ## 🧭 What's inside
 
@@ -134,6 +170,8 @@ Full diagram and component notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 > ⚠️ The defaults assume **a single admin and a trusted lab**. Do not expose this to the public internet; replace users, IPs and ACL groups before deploying elsewhere.
 
+The latest repository + runtime review (history scan, console auth, port exposure) is documented in [`docs/security-review-2026-11-12.md`](docs/security-review-2026-11-12.md). The console now binds to loopback by default because it can start containers, issue VPN keys and add users.
+
 ## 🩺 Observability & alerting
 
 **Ops-Watch** is a self-hosted console (macOS app + local web server) that collects metrics over SSH and keeps a ticket trail.
@@ -207,6 +245,16 @@ Issues and PRs are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 **TBD** — to be chosen before public release (Apache-2.0 or MIT recommended).
 
 > **Maintainers:** before making this repository public, complete [`docs/open-source-checklist.md`](docs/open-source-checklist.md) (secrets, personal data, license, CI).
+
+## ⭐ Star history
+
+<!-- 공개 전환 후 활성화 (프라이빗에서는 이미지가 깨집니다)
+<a href="https://star-history.com/#baryonlabs/linux-machine-4090&Date">
+  <img src="https://api.star-history.com/svg?repos=baryonlabs/linux-machine-4090&type=Date" alt="Star History Chart" width="100%">
+</a>
+-->
+
+> Repository is **private** for now. Star history and contributor widgets will be enabled when it goes public.
 
 ## 🙏 Acknowledgements
 
