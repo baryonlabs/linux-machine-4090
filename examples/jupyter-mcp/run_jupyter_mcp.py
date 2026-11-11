@@ -12,7 +12,7 @@ import sys
 
 # Default remote RTX 4090 admin JupyterLab credentials
 DEFAULT_URL = "http://100.64.0.2:8888"
-DEFAULT_TOKEN = "REDACTED-JUPYTER-TOKEN"
+DEFAULT_TOKEN = "<TOKEN>"
 
 server_url = os.environ.get("CODE_SANDBOX_URL") or os.environ.get("SERVER_URL") or DEFAULT_URL
 token = os.environ.get("CODE_SANDBOX_TOKEN") or os.environ.get("TOKEN") or DEFAULT_TOKEN

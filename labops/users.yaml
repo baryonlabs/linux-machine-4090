@@ -1,3 +1,5 @@
+# NOTE: this repository copy is an ANONYMIZED SEED (emails/keys are examples).
+# The production source of truth is /etc/labops/users.yaml on the server.
 # labops user registry — source of truth for `labctl sync`.
 # Installed copy: /etc/labops/users.yaml (root:root 644; edit with `sudoedit`, then `sudo labctl sync`).
 # This repo copy is only the seed (install.sh never overwrites an existing /etc copy).
@@ -27,7 +29,7 @@ users:
     expires: 2027-01-04
     headscale: true
     gpu: true
-    ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFvPqZ6z5VpwDrj62nipTVf9bi4eGn495pOtMSAUa6k student1@macbook-ppid"
+    ssh_pubkey: null
     notes: "video multi-target captioning, LoRA on 8B models"
 
   - name: student2
@@ -38,11 +40,11 @@ users:
     expires: 2027-01-04
     headscale: true
     gpu: true
-    ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJyM2brFlRQLLUcPb4osQWtcUYXFZ6cC/DenSr+DLYLj student2@example.com"
+    ssh_pubkey: null
     notes: "VLA/VLM research; SSH public key verified and received 2026-11-08"
 
   - name: student3
-    full_name: "student3@example.com"
+    full_name: "Student Three"
     email: "student3@example.com"
     role: student
     state: active
@@ -73,7 +75,7 @@ users:
     notes: "locked 2026-11-04 (idle since 2026-05-15; sudo removed)"
 
   - name: student4
-    full_name: "student4@example.com"
+    full_name: "Student Four"
     role: student
     state: locked
     expires: null

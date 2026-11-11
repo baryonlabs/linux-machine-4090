@@ -32,7 +32,7 @@ DEFAULTS = {
     "HS_CONTAINER": "headscale",
     "HS_ACL": "/home/martin/headscale/config/acl.hujson",
     "HS_ACL_IN_CONTAINER": "/etc/headscale/acl.hujson",
-    "HS_LOGIN_SERVER": "https://headscale-tunnel.example",
+    "HS_LOGIN_SERVER": os.environ.get("LABOPS_HS_LOGIN_SERVER", "https://<headscale-tunnel-host>"),
     "HS_HEALTH_URL": "http://127.0.0.1:9080/health",
     "HS_KEY_EXPIRY": "1440h",
     "STATE_DIR": "/var/lib/labops",

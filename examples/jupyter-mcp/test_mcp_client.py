@@ -9,6 +9,7 @@ import sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+TOKEN = os.environ.get("JUPYTER_TOKEN", "<TOKEN>")
 UV_BIN = os.path.expanduser("~/.local/bin/uv")
 SCRIPT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_jupyter_mcp.py"))
 
@@ -17,7 +18,7 @@ async def main():
     print("=" * 65)
     print("🚀 Connecting to Jupyter MCP Server via Stdio Transport...")
     print(f"Target Server: http://100.64.0.2:8888")
-    print(f"Token: REDACTED-JUPYTER-TOKEN")
+    print(f"Token: {TOKEN}")
     print("=" * 65)
 
     server_params = StdioServerParameters(
@@ -26,7 +27,7 @@ async def main():
         env={
             **os.environ,
             "CODE_SANDBOX_URL": "http://100.64.0.2:8888",
-            "CODE_SANDBOX_TOKEN": "REDACTED-JUPYTER-TOKEN",
+            "CODE_SANDBOX_TOKEN": TOKEN,
         }
     )
 

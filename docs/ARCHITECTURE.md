@@ -17,12 +17,12 @@ flowchart TD
     subgraph Clients["👤 사용자 및 단말 계층 (Client Layer)"]
         AdminDev["👑 관리자 (martin)<br/>MacBook / Mac mini / iPad / PC"]
         StudentKim["🎓 학생 1 (student1)<br/>Laptop (Web / SSH)"]
-        StudentStudent Two["🎓 학생 2 (student2)<br/>Laptop (Web / SSH)"]
+        StudentTwo["🎓 학생 2 (student2)<br/>Laptop (Web / SSH)"]
         StudentShen["🎓 학생 3 (student3)<br/>Laptop (Web / SSH)"]
     end
 
     subgraph NetworkSec["🛡️ 네트워크 & 보안 게이트웨이 (Zero-Trust VPN)"]
-        NgrokTunnel["🌐 ngrok TLS Tunnel<br/>(headscale-tunnel.example)"]
+        NgrokTunnel["🌐 ngrok TLS Tunnel<br/>(<headscale-tunnel-host>)"]
         Headscale["🔐 Headscale (WireGuard Coordination)<br/>Virtual IP: 100.64.0.0/10"]
         ACL["📜 Headscale ACL (acl.hujson)<br/>- admin: *:* (Full Access)<br/>- students: gpu4090:2322, 8889-8895"]
     end
@@ -31,10 +31,10 @@ flowchart TD
         SSHGateway["🚪 SSH Gateway (Port 2322)<br/>비표준 포트 / fail2ban"]
         
         subgraph ComputeLayer["🐳 사용자별 독립 컨테이너 계층 (nvcr.io/nvidia/pytorch:24.04-py3)"]
-            ContainerAdmin["📦 martin_jupyter<br/>Port: 8888<br/>Token: e08777..."]
-            ContainerKim["📦 student1_jupyter<br/>Port: 8889<br/>Token: a4c7f1..."]
-            ContainerStudent Two["📦 student2_jupyter<br/>Port: 8890<br/>Token: d398f6..."]
-            ContainerShen["📦 student3_jupyter<br/>Port: 8891<br/>Token: 8fe65a..."]
+            ContainerAdmin["📦 martin_jupyter<br/>Port: 8888<br/>Token: <TOKEN>"]
+            ContainerKim["📦 student1_jupyter<br/>Port: 8889<br/>Token: <TOKEN>"]
+            ContainerTwo["📦 student2_jupyter<br/>Port: 8890<br/>Token: <TOKEN>"]
+            ContainerShen["📦 student3_jupyter<br/>Port: 8891<br/>Token: <TOKEN>"]
         end
 
         subgraph Hardware["⚡ 하드웨어 리소스"]
@@ -49,7 +49,7 @@ flowchart TD
             subgraph UserMounts["📁 사용자별 격리 마운트 (/mnt/data/users/{user})"]
                 MountMartin["/workspace -> /mnt/data/users/martin/jupyter_home<br/>data_root/ -> /mnt/data/users/martin<br/>home/ -> /home/martin"]
                 MountKim["/workspace -> /mnt/data/users/student1/jupyter_home<br/>data_root/ -> /mnt/data/users/student1"]
-                MountStudent Two["/workspace -> /mnt/data/users/student2/jupyter_home<br/>data_root/ -> /mnt/data/users/student2"]
+                MountTwo["/workspace -> /mnt/data/users/student2/jupyter_home<br/>data_root/ -> /mnt/data/users/student2"]
                 MountShen["/workspace -> /mnt/data/users/student3/jupyter_home<br/>data_root/ -> /mnt/data/users/student3"]
             end
         end
@@ -89,7 +89,7 @@ flowchart TD
 ### 1) 제로 트러스트 네트워크 & 인가 계층 (Zero-Trust Network & ACL)
 * **Tailscale / Headscale 오버레이 네트워크**:
   * 공인 IP 및 포트포워딩을 완전히 배제하고, WireGuard 기반 가상 사설망(`100.64.0.0/10`)을 구성합니다.
-  * 외부 접속 중계는 ngrok 보안 터널(`https://headscale-tunnel.example`)을 통해 이루어집니다.
+  * 외부 접속 중계는 ngrok 보안 터널(`https://<headscale-tunnel-host>`)을 통해 이루어집니다.
 * **접근 제어 정책 (`acl.hujson`)**:
   * **`group:admin` (`martin`)**: 모든 호스트 및 모든 포트(`*:*`) 양방향 무제한 접근 허용.
   * **`group:students` (`student1`, `student2`, `student3`)**:
@@ -103,10 +103,10 @@ flowchart TD
 
 | 사용자 계정 | 역할 | JupyterLab 포트 | 보안 토큰 (Token) | 기본 시작 디렉터리 (`/workspace`) | 컨테이너 이름 |
 | :--- | :--- | :---: | :--- | :--- | :--- |
-| **`martin`** | 관리자 | `8888` | `REDACTED-TOKEN4c01de4...` (48-hex) | `/mnt/data/users/martin/jupyter_home` | `martin_jupyter` |
-| **`student1`** | 학생 연구원 | `8889` | `REDACTED-JUPYTER-TOKEN...` (40-hex) | `/mnt/data/users/student1/jupyter_home` | `student1_jupyter` |
-| **`student2`**| 학생 연구원 | `8890` | `REDACTED-JUPYTER-TOKEN...` (40-hex) | `/mnt/data/users/student2/jupyter_home` | `student2_jupyter` |
-| **`student3`** | 학생 연구원 | `8891` | `REDACTED-JUPYTER-TOKEN` (16-hex) | `/mnt/data/users/student3/jupyter_home` | `student3_jupyter` |
+| **`martin`** | 관리자 | `8888` | `<TOKEN>` | `/mnt/data/users/martin/jupyter_home` | `martin_jupyter` |
+| **`student1`** | 학생 연구원 | `8889` | `<TOKEN>` | `/mnt/data/users/student1/jupyter_home` | `student1_jupyter` |
+| **`student2`**| 학생 연구원 | `8890` | `<TOKEN>` | `/mnt/data/users/student2/jupyter_home` | `student2_jupyter` |
+| **`student3`** | 학생 연구원 | `8891` | `<TOKEN>` | `/mnt/data/users/student3/jupyter_home` | `student3_jupyter` |
 
 * **컨테이너 이미지**: `nvcr.io/nvidia/pytorch:24.04-py3` (PyTorch 2.3, CUDA 12.4, cuDNN 9 탑재)
 * **공유 메모리**: PyTorch `DataLoader` 다중 워커 통신 병목을 없애기 위해 `/dev/shm` 16GB를 컨테이너에 직접 매핑.
@@ -192,7 +192,7 @@ flowchart TD
 
 | 구분 | 주소 / 포트 | 용도 및 설명 |
 | :--- | :--- | :--- |
-| **Headscale Coordination** | `https://headscale-tunnel.example` | 외부 접속용 Tailscale 중계 URL |
+| **Headscale Coordination** | `https://<headscale-tunnel-host>` | 외부 접속용 Tailscale 중계 URL |
 | **GPU 서버 VPN IP** | `100.64.0.2` (`gpu4090`) | 사설망 내 워크스테이션 고정 주소 |
 | **SSH Gateway** | `100.64.0.2:2322` | 비표준 SSH 포트 (보안 접속) |
 | **관리자 JupyterLab** | `100.64.0.2:8888` | martin 전용 고권한 주피터랩 |

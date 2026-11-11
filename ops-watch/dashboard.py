@@ -30,6 +30,10 @@ import system_metrics
 from auto_ontology_bridge import AutoOntologyBridge
 
 PORT = int(os.environ.get("OPS_WATCH_PORT", 23450))
+# Bind to loopback by default: this console can start/stop containers, create VPN
+# keys and add users, and it exposes Jupyter tokens. Override only on a trusted host:
+#   OPS_WATCH_BIND=0.0.0.0
+BIND = os.environ.get("OPS_WATCH_BIND", "127.0.0.1")
 BASE_DIR = pathlib.Path(__file__).parent.resolve()
 
 # Automatic journal scan (was manual-only before 2026-11-11).
@@ -3108,8 +3112,8 @@ def _auto_scan_loop(interval: int) -> None:
 
 
 def run_server(port: int = PORT) -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
-    print(f"=== OPS-WATCH Web Dashboard running at http://localhost:{port} ===")
+    server = ThreadingHTTPServer((BIND, port), DashboardHandler)
+    print(f"=== OPS-WATCH Web Dashboard running at http://localhost:{port} (bind {BIND}) ===")
     health_check.start_watchdog()  # tailscale ping이 아니라 TCP 2322를 감시
     if SCAN_INTERVAL > 0:
         threading.Thread(target=_auto_scan_loop, args=(SCAN_INTERVAL,),

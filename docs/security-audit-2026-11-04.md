@@ -16,7 +16,7 @@ root 전용 항목(ufw 규칙, 각 사용자 authorized_keys, chage, crontab)은
 - 기존 학생들의 접속 IP는 **구 Tailscale(tailscale.com) tailnet** 대역. 10/25 Headscale 전환 이후 기존 학생 4명은 **현재 네트워크 경로가 없음**(공인 IP 포트 미개방, Headscale 미등록).
 - 모든 홈 디렉터리 `750` — 학생 간 상호 열람 불가 ✅
 - `/mnt/data` 교수님 폴더 `o-rwx` 적용 완료 ✅ (이전 권한: `~/mnt-data-perms.before.txt`)
-- student1 후속 작업(`finish-student1.sh`: `/mnt/data/student1`, 스모크 테스트, ollama keep-alive) **미실행**.
+- student1 후속 작업(`finish-user-setup.sh`: `/mnt/data/student1`, 스모크 테스트, ollama keep-alive) **미실행**.
 
 ## 2. 외부 노출
 
@@ -59,7 +59,7 @@ root 전용 항목(ufw 규칙, 각 사용자 authorized_keys, chage, crontab)은
 
 ### 🟠 M3. Ollama(:11434) 무인증, 0.0.0.0 바인딩
 - 로컬 학생/LAN이 모델 실행·pull·**삭제**(`/api/delete`) 가능, VRAM 점유로 학습 방해.
-- 조치: `OLLAMA_HOST=127.0.0.1`(LAN 차단), keep-alive 0(`finish-student1.sh`), 필요 시 리버스 프록시 인증.
+- 조치: `OLLAMA_HOST=127.0.0.1`(LAN 차단), keep-alive 0(`finish-user-setup.sh`), 필요 시 리버스 프록시 인증.
 
 ### 🟠 M4. 보안 업데이트 미적용 + 재부팅 필요
 - `/var/run/reboot-required` 존재, NVIDIA 590 드라이버 보안 업데이트 20건 대기(unattended-upgrades는 활성).
@@ -115,7 +115,7 @@ root 전용 항목(ufw 규칙, 각 사용자 authorized_keys, chage, crontab)은
 | 항목 | 최종 상태 | 근거 | 판정 |
 |---|---|---|---|
 | H1 registry 무인증 | `127.0.0.1:5000`만 리슨, 학생 egress에서 5000 차단 | `docker ps`, fixcp verify `blocked 127.0.0.1:5000` | ✅ 해소 (로컬 martin 계정은 여전히 무인증 push 가능 — 관리자 본인) |
-| H2 ngrok 에이전트 API | `127.0.0.1:4040` 응답 없음(000), systemd `ngrok-headscale` active/enabled, 고정 도메인 `headscale-tunnel.example` | `curl :4040`, `/health` 200 | ✅ 해소 |
+| H2 ngrok 에이전트 API | `127.0.0.1:4040` 응답 없음(000), systemd `ngrok-headscale` active/enabled, 고정 도메인 `<headscale-tunnel-host>` | `curl :4040`, `/health` 200 | ✅ 해소 |
 | H3 포워딩·셸 피벗 | sshd `Match Group students`(local 포워딩·localhost만, X11·터널 off), `student-egress` active/enabled | sshd 설정, fixcp verify: 5000/11434/19999/NAS 2294/b300 22/Mac mini 22 전부 `blocked`, pypi 200 | ✅ 해소 |
 | M1 student6 sudo | `sudo` 그룹 = martin만 | `getent group sudo` | ✅ 해소 |
 | M2 NOPASSWD install/mv | `oah-agent` → `/usr/local/bin/ollama`만 (파일 440 root) | scripts/hardening/harden.sh 출력 `parsed OK` | ✅ 해소 |

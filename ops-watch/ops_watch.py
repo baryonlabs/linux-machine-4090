@@ -182,6 +182,29 @@ def pending() -> None:
         print(f"#{row[0]} {row[1]} [{row[2]}] proposed={row[3]} status={row[5]}\n  {row[4]}")
 
 
+def _ssh_host_from_source(source: str) -> Optional[str]:
+    """Extract the target host from an `ssh [-o ...] host [cmd...]` source string."""
+    try:
+        tokens = shlex.split(source)
+    except Exception:
+        return None
+    if not tokens or tokens[0] != "ssh":
+        return None
+    with_value = {"-o", "-p", "-i", "-F", "-l", "-L", "-R", "-D", "-W",
+                  "-b", "-c", "-E", "-e", "-I", "-m", "-O", "-Q", "-S", "-w"}
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith("-"):
+            if tok in with_value:
+                i += 2
+            else:
+                i += 1
+            continue
+        return tok
+    return None
+
+
 def approve(ticket: int) -> None:
     c = db()
     row = c.execute("SELECT action, status, category, evidence FROM tickets WHERE id=?", (ticket,)).fetchone()
@@ -195,16 +218,34 @@ def approve(ticket: int) -> None:
 
     import shutil
     source = os.environ.get("OPS_WATCH_SOURCE", "")
-    if source.startswith("ssh ") and not shutil.which(argv[0]):
-        ssh_host = shlex.split(source)[1]
-        argv = ["ssh", ssh_host] + argv
-    elif not shutil.which(argv[0]):
-        argv = ["echo", f"[Notice: {argv[0]} not present locally on host] Simulation: executed allowlisted action {row[0]}"]
+    if not shutil.which(argv[0]):
+        if source.startswith("ssh "):
+            ssh_host = _ssh_host_from_source(source)
+            if not ssh_host:
+                raise SystemExit(f"cannot parse ssh host from OPS_WATCH_SOURCE: {source!r}")
+            argv = ["ssh", "-o", "ConnectTimeout=5", ssh_host] + argv
+        else:
+            # Never pretend an action ran. Previously this was replaced by `echo` and the
+            # ticket was marked approved anyway, which made the audit trail unreliable.
+            raise SystemExit(
+                f"action '{row[0]}' cannot run on this host: '{argv[0]}' not found. "
+                "Set OPS_WATCH_SOURCE='ssh <host>' or run ops-watch on the server."
+            )
 
-    # This initial action is evidence collection only; it intentionally cannot mutate a host.
     p = subprocess.run(argv, text=True, capture_output=True, timeout=45)
     out = (p.stdout + p.stderr)[-4000:]
     now = int(time.time())
+
+    if p.returncode != 0:
+        c.execute("UPDATE tickets SET status='failed', resolved_at=? WHERE id=?", (now, ticket))
+        c.execute(
+            "INSERT INTO worklog(created, ticket_id, kind, body, tags) VALUES(?,?,?,?,?)",
+            (now, ticket, "operator-approval-failed",
+             f"Action '{row[0]}' failed (rc={p.returncode}). Output: {out[:800]}", "approval,failed")
+        )
+        c.commit()
+        raise SystemExit(f"action '{row[0]}' failed (rc={p.returncode}): {out[:500]}")
+
     c.execute("UPDATE tickets SET status='approved', resolved_at=? WHERE id=?", (now, ticket))
     c.execute(
         "INSERT INTO worklog(created, ticket_id, kind, body, tags) VALUES(?,?,?,?,?)",

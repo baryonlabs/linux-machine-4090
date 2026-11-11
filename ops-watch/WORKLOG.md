@@ -89,7 +89,7 @@ PID 288277 (/usr/bin/dbus-daemon deleted) 이상 프로세스 경보 원인 규�
 2. 발급된 사전 인증키 (유효기간 90일 / 2160시간):
    hskey-<REDACTED>
 3. iPad Tailscale 앱 설정 정보:
-   - Login Server URL: https://headscale-tunnel.example
+   - Login Server URL: https://<headscale-tunnel-host>
    - 권한 범위: Headscale ACL상 group:admin (*:*) 전체 포트 무제한 접근 보장 (100.64.0.2:8888 관리자 주피터랩 포함)
 ```
 

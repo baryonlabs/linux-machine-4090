@@ -7,14 +7,15 @@ export LC_ALL=C
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TS=$(date +%Y%m%d%H%M%S)
-STUDENTS=(student5 student6 student3 student4 student1)
-IDLE_LOCK=(student5 student6 student4)   # 5+ months idle / never logged in
-NGROK_URL="https://headscale-tunnel.example"
+STUDENTS=(${LABOPS_STUDENTS:-student1 student2 student3})
+IDLE_LOCK=(${LABOPS_IDLE_LOCK:-})
+STUDENT_PROBE="${LABOPS_STUDENT_PROBE:-${STUDENTS[0]}}"
+NGROK_URL="${LABOPS_NGROK_URL:-https://<headscale-tunnel-host>}"
 
 step(){ echo; echo "===== $*"; }
 
-# student1 data folder / ~/data link (idempotent; optional helper next to this script)
-for helper in "$HERE/finish-student1.sh" "$HERE/../setup/finish-student1.sh" /home/martin/finish-student1.sh; do
+# sample student data folder / ~/data link (idempotent; optional helper next to this script)
+for helper in "$HERE/finish-user-setup.sh" "$HERE/../setup/finish-user-setup.sh" /home/martin/finish-user-setup.sh; do
   if [ -f "$helper" ]; then
     bash "$helper" || echo "!!! $(basename "$helper") failed — continuing"
     break
@@ -94,7 +95,7 @@ fi
 sshd -t && systemctl reload ssh
 # clean stray backup out of sshd_config.d
 mv /etc/ssh/sshd_config.d/*.bak.* /root/ 2>/dev/null || true
-sshd -T -C user=student1,host=x,addr=100.64.0.9 | grep -E "^(allowtcpforwarding|permitopen|x11forwarding)" || true
+sshd -T -C user=$STUDENT_PROBE,host=x,addr=100.64.0.9 | grep -E "^(allowtcpforwarding|permitopen|x11forwarding)" || true
 
 # ---------------------------------------------------------------- M2
 step "M2: narrow martin NOPASSWD sudo (drop install/mv = root-equivalent)"
@@ -153,8 +154,8 @@ chmod 1777 /tmp/RustDesk 2>/dev/null || true
 ls -ld /tmp/RustDesk 2>/dev/null || true
 
 # ---------------------------------------------------------------- verify as student
-step "verify (as student1)"
-sudo -u student1 -H bash -s <<'T'
+step "verify (as $STUDENT_PROBE)"
+sudo -u "$STUDENT_PROBE" -H bash -s <<'T'
 t(){ timeout 4 bash -c "</dev/tcp/$1/$2" 2>/dev/null && echo "OPEN    $1:$2" || echo "blocked $1:$2"; }
 t 127.0.0.1 5000; t 127.0.0.1 11434; t 127.0.0.1 19999; t 192.168.219.50 2294; t 100.64.0.5 22; t 100.64.0.4 22
 curl -s -m8 -o /dev/null -w "internet (pypi): %{http_code}\n" https://pypi.org/simple/

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 NEW_USER="student1"
-PUBKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFvPqZ6z5VpwDrj62nipTVf9bi4eGn495pOtMSAUa6k student1@macbook-ppid'
+PUBKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample student1@example'
 
 # 1) Account: no password (key-only), bash, GPU access via video/render groups (same as student5). No sudo.
 if ! id "$NEW_USER" &>/dev/null; then

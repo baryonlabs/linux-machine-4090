@@ -91,6 +91,8 @@ sudo labctl status <username>
 cd ops-watch
 OPS_WATCH_PORT=23450 python3 dashboard.py
 # → http://localhost:23450  (macOS app bundle: /Applications/Ops-Watch.app)
+#   Binds 127.0.0.1 by default. This console can control the server, so expose it only
+#   on a trusted host: OPS_WATCH_BIND=0.0.0.0
 ```
 
 Verify the important part — the data plane:
