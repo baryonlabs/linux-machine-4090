@@ -35,23 +35,23 @@ Bound to `0.0.0.0:23450`, any LAN/tailnet peer could perform all of the above.
 Commit scan (unique findings):
 
 ```
-student3@example.com            labops/users.yaml        all commits since 189fbd8
-student1@example.com   labops/users.yaml        c5ea752…
-student2@example.com      labops/users.yaml        c5ea752…
-student4@example.com           labops/users.yaml        189fbd8…
-admin@example.com        ops-watch/WORKLOG.md     c5ea752…
+student3@…            labops/users.yaml        all commits since 189fbd8
+student1@…   labops/users.yaml        c5ea752…
+student2@…      labops/users.yaml        c5ea752…
+student4@…           labops/users.yaml        189fbd8…
+admin@…        ops-watch/WORKLOG.md     c5ea752…
 ```
 
 **Fixed in HEAD:** emails replaced with `studentN@example.com`, SSH keys set to `null`, and the file marked as an anonymized seed (production source of truth remains `/etc/labops/users.yaml`).
 **Still in history:** `git log -p` exposes them. A history rewrite is required before public release.
 
 ### S11 · HIGH — Live Jupyter token committed
-`examples/jupyter-mcp/run_jupyter_mcp.py` and `test_mcp_client.py` contained the **admin JupyterLab token** (`REDACTED-TOKEN…`, 48 hex) as a default value, and `docs/ARCHITECTURE.md` contained token prefixes. The same token is returned by `/api/metrics/users`.
+`examples/jupyter-mcp/run_jupyter_mcp.py` and `test_mcp_client.py` contained the **admin JupyterLab token** (48 hex) as a default value, and `docs/ARCHITECTURE.md` contained token prefixes. The same token is returned by `/api/metrics/users`.
 
 Present since `c5ea752`. **Fixed in HEAD:** read from `JUPYTER_TOKEN` / `<TOKEN>` placeholder. **Action:** rotate the Jupyter tokens for all four containers; the value is still in history.
 
 ### S3 · MEDIUM — ngrok tunnel hostname in tracked files
-`headscale-tunnel.example` appeared in `labops/install.sh`, `labops/lib/labops_common.py`, `scripts/hardening/harden.sh`, `docs/ARCHITECTURE.md`, `docs/security-audit-2026-11-04.md` and `WORKLOG.md`.
+`<headscale-tunnel-host>` appeared in `labops/install.sh`, `labops/lib/labops_common.py`, `scripts/hardening/harden.sh`, `docs/ARCHITECTURE.md`, `docs/security-audit-2026-11-04.md` and `WORKLOG.md`.
 
 **Fixed in HEAD:** now `LABOPS_HS_LOGIN_SERVER` / `LABOPS_NGROK_URL` with `<headscale-tunnel-host>` placeholder; docs updated.
 **Action:** if that tunnel is still active, rotate/disable it — the hostname is in history.
@@ -104,21 +104,26 @@ Run before making the repository public, then force-push and have collaborators 
 
 ```bash
 pip install git-filter-repo
+# Replace the real values from the maintainers' private notes (not stored in this repo):
+#   <student-email-N>  -> studentN@example.com
+#   <admin-email>      -> admin@example.com
+#   <tunnel-host>      -> headscale-tunnel.example
+#   <jupyter-token>    -> REDACTED-JUPYTER-TOKEN
+#   <student-name-N>   -> Student N
 cat > /tmp/replace.txt <<'EOF'
-student1@example.com==>student1@example.com
-student2@example.com==>student2@example.com
-student3@example.com==>student3@example.com
-student4@example.com==>student4@example.com
-admin@example.com==>admin@example.com
-headscale-tunnel.example==>headscale-tunnel.example
-REDACTED-JUPYTER-TOKEN==>REDACTED-JUPYTER-TOKEN
-Student One==>Student One
-Student Two==>Student Two
-Student Three==>Student Three
+<student-email-1>==>student1@example.com
+<student-email-2>==>student2@example.com
+<student-email-3>==>student3@example.com
+<student-email-4>==>student4@example.com
+<admin-email>==>admin@example.com
+<tunnel-host>==>headscale-tunnel.example
+<jupyter-token>==>REDACTED-JUPYTER-TOKEN
+<student-name-1>==>Student One
+<student-name-2>==>Student Two
+<student-name-3>==>Student Three
 EOF
 git filter-repo --replace-text /tmp/replace.txt
 git remote add origin https://github.com/baryonlabs/linux-machine-4090.git
-git push --force --all && git push --force --tags
 ```
 
 Rotate the Discord webhook and any pre-auth key that appeared in `WORKLOG.md` **regardless of the rewrite**.
@@ -129,5 +134,5 @@ Rotate the Discord webhook and any pre-auth key that appeared in `WORKLOG.md` **
 python3 -m py_compile ops-watch/*.py
 python3 ops-watch/health_check.py --json
 curl -s http://127.0.0.1:23450/api/status | python3 -m json.tool   # bind = loopback
-git grep -nE 'gmail\.com|headscale-tunnel|hskey-|discord(app)?\.com/api/webhooks' $(git rev-list --all) -- . | head
+git grep -nE 'gmail\.com|ngrok-free|hskey-|discord(app)?\.com/api/webhooks' $(git rev-list --all) -- . | head
 ```
