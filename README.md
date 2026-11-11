@@ -110,7 +110,7 @@ SSH health: OK  (ok=True)
 ![Architecture](docs/architecture.png)
 
 <p align="center">
-  <sub>원본 HTML: <a href="docs/architecture.html">docs/architecture.html</a> · 사용자 IP·호스트명·계정명은 비식별화된 예시값입니다.</sub>
+  <sub>원본 HTML: <a href="docs/architecture.html">docs/architecture.html</a> · 사용자 이름·IP·호스트명·계정명은 비식별화된 예시값입니다.</sub>
 </p>
 
 - **Access** — tailnet only, non-standard SSH `:2322`, public-key auth
