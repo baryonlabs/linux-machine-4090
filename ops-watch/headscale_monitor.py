@@ -317,9 +317,8 @@ def get_headscale_nodes() -> List[Dict[str, Any]]:
 
 def _acl_students() -> List[str]:
     try:
-        import json as _json
         import labops_config
-        data = _json.loads(labops_config.acl_path().read_text(encoding="utf-8"))
+        data = labops_config.load_acl()
         return [u.rstrip("@") for u in data.get("groups", {}).get("group:students", [])]
     except Exception:
         return []

@@ -244,7 +244,7 @@ Issues and PRs are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 
 **MIT** © 2026 Baryon Labs — see [`LICENSE`](LICENSE).
 
-> **Maintainers:** before making this repository public, complete [`docs/open-source-checklist.md`](docs/open-source-checklist.md) (secrets, personal data, license, CI).
+> **Maintainers:** the pre-publication checklist is kept in [`docs/open-source-checklist.md`](docs/open-source-checklist.md) (completed for the 2026-11-12 release).
 
 ## ⭐ Star history
 

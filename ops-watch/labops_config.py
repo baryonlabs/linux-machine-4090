@@ -48,6 +48,17 @@ def acl_path() -> pathlib.Path:
     )
 
 
+def load_acl():
+    """Parse the ACL file, tolerating huJSON comments and trailing commas."""
+    import json
+    import re
+    text = acl_path().read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"(?m)//.*$", "", text)
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+    return json.loads(text)
+
+
 def user_names(role: str | None = None) -> list[str]:
     """Minimal parser for the restricted users.yaml (one `- name:` per user)."""
     path = users_yaml_path()
