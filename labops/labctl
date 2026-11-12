@@ -834,7 +834,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--registry")
     sp = ap.add_subparsers(dest="cmd", required=True)
-    sp.add_parser("sync")
+    sy = sp.add_parser("sync", help="sync all users, or one user")
+    sy.add_argument("user", nargs="?", help="sync only this user (same as `add`, without a new key)")
+    sy.add_argument("--only", metavar="USER", help="alias of the positional user")
     a = sp.add_parser("add")
     a.add_argument("user")
     a.add_argument("--new-key", action="store_true", help="always create a fresh Headscale pre-auth key")
@@ -861,7 +863,7 @@ def main():
     args = ap.parse_args()
     ctx = Ctx(args)
     if args.cmd == "sync":
-        cmd_sync(ctx)
+        cmd_sync(ctx, only=(args.only or args.user))
     elif args.cmd == "add":
         cmd_sync(ctx, only=args.user, new_key=args.new_key, build_envs=args.build_envs)
     elif args.cmd == "remove":

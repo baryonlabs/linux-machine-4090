@@ -49,6 +49,8 @@ sudo labctl extend student1 2027-03-04      # 만료 연장(레지스트리도 �
 sudo labctl remove student1                 # 오프보딩: 잠금+만료, AllowUsers 제거, 세션 종료,
                                                # Headscale 노드/키 만료 + ACL 제거, 데이터는 _archive/<u>-<날짜>로 이동(삭제 없음)
 sudo labctl sync                               # 레지스트리 전체 적용 (locked/removed 상태는 잠그고 AllowUsers에서 뺌)
+sudo labctl sync student1                       # 한 사용자만 적용 (`add`와 동일, 새 키는 발급하지 않음)
+sudo labctl sync --only student1                # 위와 동일한 별칭
 labctl list                                    # 상태·만료·최근 로그인·Headscale 온라인 (martin으로 실행 가능)
 labctl report --days 7                         # 사용자별 GPU 시간, 최대 VRAM, 동시 작업 수, 24시간 넘은 작업
 ```
