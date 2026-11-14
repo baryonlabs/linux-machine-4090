@@ -50,7 +50,10 @@ SSH_PORT = int(os.environ.get("OPS_WATCH_SSH_PORT", "2322"))
 LAN_HOST = os.environ.get("OPS_WATCH_LAN_HOST", "")
 SEGMENT_HOST = os.environ.get("OPS_WATCH_SEGMENT_HOST", "")  # optional extra probe
 
-PROBE_TIMEOUT = float(os.environ.get("OPS_WATCH_PROBE_TIMEOUT", "3.0"))
+PROBE_TIMEOUT = float(os.environ.get("OPS_WATCH_PROBE_TIMEOUT", "4.0"))
+# A single 3-4s timeout can be a tailnet path switch (DERP <-> direct, NAT rebind).
+# Require this many consecutive failed checks before alerting.
+ALERT_AFTER = int(os.environ.get("OPS_WATCH_HEALTH_ALERT_AFTER", "2"))
 CACHE_TTL = float(os.environ.get("OPS_WATCH_HEALTH_TTL", "20"))
 
 # States
@@ -187,6 +190,13 @@ def get_ssh_health(force: bool = False) -> Dict[str, Any]:
 
         peer = tailscale_peer(SSH_HOST)
         tailnet = tcp_probe(SSH_HOST, SSH_PORT)
+        if not tailnet.get("ok"):
+            # one retry: path renegotiation (DERP <-> direct) can drop a single SYN
+            time.sleep(1.2)
+            retry = tcp_probe(SSH_HOST, SSH_PORT)
+            if retry.get("ok"):
+                retry["retried"] = True
+                tailnet = retry
         lan = tcp_probe(LAN_HOST, SSH_PORT) if LAN_HOST else {"ok": False, "state": "SKIPPED"}
         segment = tcp_probe(SEGMENT_HOST, SSH_PORT) if SEGMENT_HOST else None
 
@@ -244,9 +254,10 @@ _TITLES = {
 _HINTS = {
     DEGRADED: "포트는 열리는데 SSH 배너가 없습니다. sshd 행(hang)·과부하·다른 프로세스 점유를 확인하세요.",
     FIREWALL_BLOCKED: (
-        "tailscaled는 ping에 응답하지만 커널 TCP가 드롭되고 있습니다.\n"
-        "호스트 콘솔에서 `sudo ufw status verbose` / `sudo nft list ruleset` / `sudo iptables -S` 확인 후\n"
-        "`sudo ufw allow in on tailscale0 && sudo ufw allow 2322/tcp` 로 복구하세요."
+        "tailscaled는 응답하지만 커널 TCP가 타임아웃되었습니다.\n"
+        "DERP↔direct 경로 전환·NAT 재바인딩 순간에도 같은 증상이 1회 발생할 수 있어,\n"
+        "2회 연속 실패일 때만 알림을 보냅니다. 지속되면 호스트에서 `sudo ufw status verbose`,\n"
+        "`sudo nft list ruleset`, `sudo iptables -S`를 확인하세요."
     ),
     LISTENER_DOWN: "TCP가 RST로 거부됩니다. 호스트는 살아 있으나 sshd가 2322에 리스닝하지 않습니다. `sudo systemctl restart ssh`.",
     HOST_UNREACHABLE: "ping/TCP 모두 무응답입니다. 전원·네트워크 케이블·공유기를 확인하세요.",
@@ -295,6 +306,9 @@ def check_and_alert(force: bool = False) -> Dict[str, Any]:
     last_alerted = prev.get("last_alerted")
 
     should_alert = force or (state != last_alerted)
+    # debounce: ignore a single transient failure (tailnet path flap)
+    if not force and state != OK and result["fail_count"] < ALERT_AFTER:
+        should_alert = False
     # Do not spam on the very first observation if everything is fine.
     if last_alerted is None and state == OK:
         should_alert = False
