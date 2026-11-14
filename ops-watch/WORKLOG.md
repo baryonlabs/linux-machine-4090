@@ -4,6 +4,36 @@
 
 ## 최근 운영 로그
 
+### 2026-11-14 18:00 — maintenance (disk · logrotate · apt · daily scan)
+
+```text
+1. 디스크 경고 및 공지
+   - 루트 718G/914G (83%, 여유 150G), /mnt/data 2.1T/7.3T (31%, 여유 4.8T)
+   - 홈 사용량: User A 267G, User B 93G (관리자 166G), 잠금 계정 41G
+   - Discord 공지 + 대상 사용자 2명 개별 메일 발송 (이동 명령·캐시 정리·기한 2026-11-21)
+
+2. 8080 포트 정체 확인
+   - 0.0.0.0:8080 = dureclaw-core-headscale-1 (Headscale 제어 서버), Jupyter 아님
+   - Jupyter: 8890/8889/8891 running, 관리자 8888 exited
+
+3. logrotate / apt 이상
+   - logrotate 실패 원인: /etc/logrotate.d/cloud-init 중복 엔트리
+   - unattended-upgrade가 2026-11-11 23:05부터 hang → dpkg 락 점유, apt-daily 실패
+   - 보안 업데이트 95개 대기 (일부 held/broken 패키지 포함)
+   - 정비 스크립트 준비: ~/maintenance-2026-11-14.sh (중복 제거 → 멈춘 apt 종료 →
+     dpkg 복구 → apt update/upgrade → 검증), 로그 /var/log/labops-maintenance-*.log
+
+4. 일일 취약점 점검 자동화
+   - ~/labops-vuln-daily.sh + martin crontab 08:30
+   - 점검: Ubuntu Pro 보안 업데이트, Livepatch CVE, 리스너 포트, 컨테이너, Lynis, 재부팅 필요
+   - Discord 웹훅 전송 (테스트 204), 상태 파일 ~/.labops-vuln-state.json
+   - 테스트 결과: sec=95, cves=0, ports=34, docker=10
+
+5. 접속 장애(로컬)
+   - 11-13 03:10 로컬 Mac Tailscale 중지 → `tailscale up`으로 복구
+   - 서버는 정상 (uptime 2d+, b300에서 SSH 배너 확인)
+```
+
 ### 2026-11-08 11:40:22 — operator-note (Ticket #2)
 ```text
 Discord Webhook URL 신규 채널로 교체 및 테스트 발송 완료:
